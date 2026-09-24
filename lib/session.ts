@@ -1,5 +1,5 @@
-export const GRAPHQL_URL = process.env.NEXT_PUBLIC_GRAPHQL_URL || "http://localhost:4000/graphql";
-
+// lib/session.ts (the fallback default is also missing it)
+export const GRAPHQL_URL = process.env.NEXT_PUBLIC_GRAPHQL_URL || "https://keystone-ai-backend.onrender.com/graphql";
 let inFlight: Promise<boolean> | null = null;
 
 export function refreshSession(): Promise<boolean> {
