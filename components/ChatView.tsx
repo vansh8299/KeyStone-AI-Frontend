@@ -12,8 +12,9 @@ import {
   REWIND_CONVERSATION,
   SWITCH_BRANCH,
 } from "@/lib/graphql/conversation";
-import { ME } from "@/lib/graphql/auth";
 import Header from "@/components/Header";
+import ServerUnavailable from "@/components/ServerUnavailable";
+import { useCurrentUser } from "@/lib/useCurrentUser";
 import MarkdownMessage from "@/components/MarkdownMessage";
 import Sidebar, { type ConversationSummary } from "@/components/Sidebar";
 import {
@@ -133,23 +134,14 @@ export default function ChatView() {
   const params = useParams<{ conversationId?: string[] }>();
   const conversationId = params.conversationId?.[0];
 
-  const {
-    data: meData,
-    loading: meLoading,
-    refetch: refetchMe,
-  } = useQuery(ME, { fetchPolicy: "network-only" });
+  const auth = useCurrentUser();
+  const refetchMe = auth.refetch;
   const [switchBranch] = useMutation(SWITCH_BRANCH);
   const [rewindConversation] = useMutation(REWIND_CONVERSATION);
   const [setMessageFeedback] = useMutation(SET_MESSAGE_FEEDBACK);
   const { showError, showSuccess } = useToast();
   const [feedbackDialog, setFeedbackDialog] = useState<{ messageId: string; saving: boolean; error: string | null } | null>(null);
   const chatTurns = useChatTurns();
-  const turn = chatTurns.turnFor(conversationId);
-  const streaming = Boolean(turn?.attached);
-  const [navigating, setNavigating] = useState(false);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const closeSidebar = useCallback(() => setSidebarOpen(false), []);
-  const busy = streaming || navigating;
 
   // Which conversation `messages` currently holds. State so render can compare it with the URL;
   // the ref mirror is for async callbacks that must check it after an await.
@@ -158,6 +150,15 @@ export default function ChatView() {
   useEffect(() => {
     loadedConversationIdRef.current = loadedConversationId;
   }, [loadedConversationId]);
+
+  // A brand-new chat gets its ID from the server a moment before the URL changes to /chat/<id>;
+  // falling back to the adopted ID keeps the streaming reply on screen through that gap.
+  const turn = chatTurns.turnFor(conversationId ?? loadedConversationId);
+  const streaming = Boolean(turn?.attached);
+  const [navigating, setNavigating] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const closeSidebar = useCallback(() => setSidebarOpen(false), []);
+  const busy = streaming || navigating;
 
   const { data: convoData, loading: convoLoading, error: convoError } = useQuery(CONVERSATION, {
     variables: { id: conversationId },
@@ -192,12 +193,6 @@ export default function ChatView() {
   }
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (!meLoading && !meData?.me) {
-      router.replace("/login");
-    }
-  }, [meLoading, meData, router]);
-
   function showConversation(conversation: ServerConversation) {
     setMessages(toChatMessages(conversation));
     setIsRewound(conversation.isRewound);
@@ -208,11 +203,18 @@ export default function ChatView() {
   // "state derived from a changing prop") instead of in an effect, so there's no extra render pass.
   const serverConversation: ServerConversation | null =
     conversationId && convoData?.conversation?.id === conversationId ? convoData.conversation : null;
-  if (!conversationId && loadedConversationId !== undefined) {
-    setLoadedConversationId(undefined);
-    setMessages([]);
-    setIsRewound(false);
-    setEditing(null);
+  const [urlConversationId, setUrlConversationId] = useState(conversationId);
+  if (urlConversationId !== conversationId) {
+    setUrlConversationId(conversationId);
+    // Only an actual navigation to /chat clears the screen. A new chat adopting its server ID
+    // (loaded ID set while the URL still reads /chat) must keep the messages already shown —
+    // and since the loaded ID then matches the new URL, the conversation isn't refetched either.
+    if (!conversationId && loadedConversationId !== undefined) {
+      setLoadedConversationId(undefined);
+      setMessages([]);
+      setIsRewound(false);
+      setEditing(null);
+    }
   } else if (conversationId && loadedConversationId !== conversationId && serverConversation) {
     setLoadedConversationId(conversationId);
     showConversation(serverConversation);
@@ -440,12 +442,14 @@ export default function ChatView() {
     await refetchMe();
   }
 
-  const conversations: ConversationSummary[] = meData?.me?.conversations ?? [];
+  const conversations: ConversationSummary[] = auth.me?.conversations ?? [];
 
   const showLoadingHistory = Boolean(conversationId) && convoLoading && messages.length === 0;
   const historyError =
     conversationId && convoError && messages.length === 0 ? getErrorMessage(convoError) : null;
   const awaitingClarification = messages[messages.length - 1]?.clarification === "pending";
+
+  if (auth.status === "error") return <ServerUnavailable onRetry={auth.retry} />;
 
   return (
     <main className="dashboard-shell chat-page">
@@ -458,7 +462,7 @@ export default function ChatView() {
       <div className="chat-layout">
         <Sidebar
           conversations={conversations}
-          loading={meLoading}
+          loading={auth.status === "loading"}
           activeId={conversationId}
           onDeleted={handleConversationDeleted}
           mobileOpen={sidebarOpen}

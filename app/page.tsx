@@ -1,19 +1,20 @@
 "use client";
 
 import { useEffect } from "react";
-import { useQuery } from "@apollo/client";
 import { useRouter } from "next/navigation";
-import { ME } from "@/lib/graphql/auth";
 import { PageLoader } from "@/components/Loader";
+import ServerUnavailable from "@/components/ServerUnavailable";
+import { useCurrentUser } from "@/lib/useCurrentUser";
 
 export default function HomePage() {
   const router = useRouter();
-  const { data, loading } = useQuery(ME, { fetchPolicy: "network-only" });
+  // Signed-out visitors are sent to /login by the hook itself.
+  const { status, retry } = useCurrentUser();
 
   useEffect(() => {
-    if (loading) return;
-    router.replace(data?.me ? "/chat" : "/login");
-  }, [loading, data, router]);
+    if (status === "authenticated") router.replace("/chat");
+  }, [status, router]);
 
+  if (status === "error") return <ServerUnavailable onRetry={retry} />;
   return <PageLoader />;
 }

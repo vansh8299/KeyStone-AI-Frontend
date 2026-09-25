@@ -1,16 +1,16 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@apollo/client";
-import { useRouter } from "next/navigation";
 import {
   INGEST_FILE,
   INGEST_TEXT,
   DELETE_INGESTED_DOCUMENT,
   DOCUMENTS,
 } from "@/lib/graphql/rag";
-import { ME } from "@/lib/graphql/auth";
 import Header from "@/components/Header";
+import ServerUnavailable from "@/components/ServerUnavailable";
+import { useCurrentUser } from "@/lib/useCurrentUser";
 import { useToast } from "@/components/Toaster";
 import { useConfirm } from "@/components/ConfirmDialog";
 import { ButtonLabel, SkeletonList, Spinner } from "@/components/Loader";
@@ -98,12 +98,11 @@ const fileKey = (f: File) => `${f.name}:${f.size}:${f.lastModified}`;
 const NON_RETRYABLE_CODES = new Set(["BAD_USER_INPUT", "PAYLOAD_TOO_LARGE", "CONFLICT"]);
 
 export default function KnowledgeBasePage() {
-  const router = useRouter();
-  const { data: meData, loading: meLoading } = useQuery(ME, { fetchPolicy: "network-only" });
+  const auth = useCurrentUser();
 
   const { data: docsData, loading: docsLoading, error: docsError, refetch } = useQuery(DOCUMENTS, {
     fetchPolicy: "network-only",
-    skip: meLoading || !meData?.me,
+    skip: auth.status !== "authenticated",
   });
 
   const [ingestFile] = useMutation(INGEST_FILE);
@@ -120,9 +119,6 @@ export default function KnowledgeBasePage() {
   const { showSuccess } = useToast();
   const confirm = useConfirm();
 
-  useEffect(() => {
-    if (!meLoading && !meData?.me) router.replace("/login");
-  }, [meLoading, meData, router]);
 
   function updateUpload(id: string, patch: Partial<UploadItem>) {
     setUploads((prev) => prev.map((u) => (u.id === id ? { ...u, ...patch } : u)));
@@ -260,6 +256,8 @@ export default function KnowledgeBasePage() {
     showSuccess("Document deleted");
     refetch();
   }
+
+  if (auth.status === "error") return <ServerUnavailable onRetry={auth.retry} />;
 
   return (
     <main className="dashboard-shell scroll-page">
@@ -448,7 +446,7 @@ export default function KnowledgeBasePage() {
           </details>
 
           <h2 className="section-title">Ingested documents</h2>
-          {meLoading || (docsLoading && !docsData) ? (
+          {auth.status === "loading" || (docsLoading && !docsData) ? (
             <SkeletonList rows={3} variant="card" />
           ) : docsError && !docsData ? (
             <div className="error-banner" role="alert">

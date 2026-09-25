@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMutation } from "@apollo/client";
+import { useApolloClient, useMutation } from "@apollo/client";
 import { LOGOUT } from "@/lib/graphql/auth";
 import ThemeToggle from "@/components/ThemeToggle";
 import { useConfirm } from "@/components/ConfirmDialog";
@@ -17,6 +17,7 @@ interface HeaderProps {
 export default function Header({ active, onMenuClick, menuOpen = false }: HeaderProps) {
   const router = useRouter();
   const [logout] = useMutation(LOGOUT);
+  const client = useApolloClient();
   const confirm = useConfirm();
 
   async function handleLogout() {
@@ -28,7 +29,10 @@ export default function Header({ active, onMenuClick, menuOpen = false }: Header
       tone: "warning",
       onConfirm: () => logout(),
     });
-    if (confirmed) router.push("/login");
+    if (!confirmed) return;
+    // Don't leave this account's conversations in memory for whoever signs in next.
+    await client.clearStore();
+    router.push("/login");
   }
 
   return (
