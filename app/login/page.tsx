@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useSyncExternalStore, FormEvent } from "react";
-import { useMutation } from "@apollo/client";
+import { useApolloClient, useMutation } from "@apollo/client";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import ThemeToggle from "@/components/ThemeToggle";
@@ -21,6 +21,7 @@ const sessionExpiredInUrl = () => new URLSearchParams(window.location.search).ge
 
 export default function LoginPage() {
   const router = useRouter();
+  const client = useApolloClient();
   const form = useForm({ email: "", password: "" }, validators);
   const [error, setError] = useState<ApiError | null>(null);
   const sessionExpired = useSyncExternalStore(noSubscription, sessionExpiredInUrl, () => false);
@@ -32,6 +33,9 @@ export default function LoginPage() {
     if (!form.validateAll()) return;
     try {
       await login({ variables: { input: { email: form.values.email.trim(), password: form.values.password } } });
+      // Drop anything cached before signing in (e.g. the "signed out" answer, or a previous
+      // user's data) so the app starts from the new session.
+      await client.clearStore();
       router.push(safeNextPath());
     } catch (err) {
       const apiError = toApiError(err);
