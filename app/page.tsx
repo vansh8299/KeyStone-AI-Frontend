@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { useQuery } from "@apollo/client";
 import { useRouter } from "next/navigation";
 import { ME } from "@/lib/graphql/auth";
+import { PageLoader } from "@/components/Loader";
 
 export default function HomePage() {
   const router = useRouter();
@@ -14,5 +15,5 @@ export default function HomePage() {
     router.replace(data?.me ? "/chat" : "/login");
   }, [loading, data, router]);
 
-  return null;
+  return <PageLoader />;
 }

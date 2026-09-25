@@ -1,40 +1,38 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 import { applyTheme, getSavedTheme, getTheme, saveTheme, systemTheme, type Theme } from "@/lib/theme";
 
+// The theme's source of truth is the data-theme attribute on <html> (set before hydration by
+// themeInitScript), so the toggle subscribes to it rather than copying it into state.
+function subscribeTheme(notify: () => void) {
+  const observer = new MutationObserver(notify);
+  observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+
+  // Follow the OS setting until the user picks a theme explicitly.
+  const media = window.matchMedia("(prefers-color-scheme: light)");
+  const onSystemChange = () => {
+    if (!getSavedTheme()) applyTheme(systemTheme());
+  };
+  media.addEventListener("change", onSystemChange);
+
+  // A theme picked in another tab.
+  const onStorage = () => applyTheme(getSavedTheme() ?? systemTheme());
+  window.addEventListener("storage", onStorage);
+
+  return () => {
+    observer.disconnect();
+    media.removeEventListener("change", onSystemChange);
+    window.removeEventListener("storage", onStorage);
+  };
+}
+
 export default function ThemeToggle({ className = "" }: { className?: string }) {
-  const [theme, setTheme] = useState<Theme | null>(null);
-
-  useEffect(() => {
-    setTheme(getTheme());
-
-    const media = window.matchMedia("(prefers-color-scheme: light)");
-    const onSystemChange = () => {
-      if (getSavedTheme()) return;
-      const next = systemTheme();
-      applyTheme(next);
-      setTheme(next);
-    };
-    media.addEventListener("change", onSystemChange);
-
-    const onStorage = () => {
-      const next = getSavedTheme() ?? systemTheme();
-      applyTheme(next);
-      setTheme(next);
-    };
-    window.addEventListener("storage", onStorage);
-
-    return () => {
-      media.removeEventListener("change", onSystemChange);
-      window.removeEventListener("storage", onStorage);
-    };
-  }, []);
+  // null on the server: the real theme is only known in the browser.
+  const theme = useSyncExternalStore<Theme | null>(subscribeTheme, getTheme, () => null);
 
   function toggle() {
-    const next: Theme = getTheme() === "dark" ? "light" : "dark";
-    saveTheme(next);
-    setTheme(next);
+    saveTheme(getTheme() === "dark" ? "light" : "dark");
   }
 
   const label = theme === "light" ? "Switch to dark theme" : "Switch to light theme";

@@ -3,8 +3,10 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { FEEDBACK_CATEGORIES, type FeedbackCategory } from "@/lib/graphql/feedback";
+import { ButtonLabel } from "@/components/Loader";
+import { LIMITS } from "@/lib/validation";
 
-const REASON_MAX_CHARS = 2000;
+const REASON_MAX_CHARS = LIMITS.feedbackReasonMaxChars;
 
 interface FeedbackDialogProps {
   initialCategories?: FeedbackCategory[];
@@ -142,7 +144,7 @@ export default function FeedbackDialog({
               Skip
             </button>
             <button type="submit" className="btn-primary feedback-submit" disabled={saving || !hasDetails}>
-              {saving ? "Sending…" : "Submit"}
+              <ButtonLabel loading={saving} loadingText="Sending…">Submit</ButtonLabel>
             </button>
           </div>
         </form>

@@ -40,6 +40,7 @@ export const DOCUMENTS = gql`
       id
       title
       sourceUrl
+      contentHash
       createdAt
     }
   }
