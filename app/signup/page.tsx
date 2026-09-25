@@ -5,31 +5,44 @@ import { useMutation } from "@apollo/client";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import ThemeToggle from "@/components/ThemeToggle";
+import { ButtonLabel } from "@/components/Loader";
+import FormField from "@/components/FormField";
 import { SIGNUP } from "@/lib/graphql/auth";
 import { ApiError, toApiError } from "@/lib/errors";
 import { safeNextPath } from "@/lib/session";
+import { LIMITS, passwordChecks, rules, useForm, type Validator } from "@/lib/validation";
+
+type SignupValues = { name: string; email: string; password: string; confirmPassword: string };
+
+const validators: { [K in keyof SignupValues]: Validator<SignupValues> } = {
+  name: rules.name,
+  email: rules.email,
+  password: rules.newPassword,
+  confirmPassword: (value, values) =>
+    !value ? "Please confirm your password." : value !== values.password ? "Passwords don't match." : null,
+};
 
 export default function SignupPage() {
   const router = useRouter();
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const form = useForm<SignupValues>({ name: "", email: "", password: "", confirmPassword: "" }, validators);
   const [error, setError] = useState<ApiError | null>(null);
   const [signup, { loading }] = useMutation(SIGNUP);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
+    if (!form.validateAll()) return;
+    const { name, email, password } = form.values;
     try {
-      await signup({ variables: { input: { email, password, name: name || undefined } } });
+      await signup({ variables: { input: { email: email.trim(), password, name: name.trim() || undefined } } });
       router.push(safeNextPath());
     } catch (err) {
-      setError(toApiError(err));
+      const apiError = toApiError(err);
+      if (!form.applyServerError(apiError.field, apiError.message)) setError(apiError);
     }
   }
 
-  const fieldError = (field: string) => (error?.field === `input.${field}` ? error.message : null);
-  const bannerError = error && !error.field?.startsWith("input.") ? error : null;
+  const password = form.values.password;
 
   return (
     <main className="auth-shell">
@@ -38,10 +51,10 @@ export default function SignupPage() {
         <h1 className="auth-title">Create your account</h1>
         <p className="auth-subtitle">Start chatting with your documents.</p>
 
-        {bannerError && (
+        {error && (
           <div className="error-banner" role="alert">
-            {bannerError.message}
-            {bannerError.code === "CONFLICT" && (
+            {error.message}
+            {error.code === "CONFLICT" && (
               <>
                 {" "}
                 <Link href="/login">Log in</Link>
@@ -51,34 +64,31 @@ export default function SignupPage() {
         )}
 
         <form onSubmit={handleSubmit} noValidate>
-          <Field id="name" label="Name" error={fieldError("name")}>
-            <input id="name" type="text" autoComplete="name" value={name} onChange={(e) => setName(e.target.value)} />
-          </Field>
-          <Field id="email" label="Email" error={fieldError("email")}>
-            <input
-              id="email"
-              type="email"
-              autoComplete="email"
-              required
-              aria-invalid={Boolean(fieldError("email"))}
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-            />
-          </Field>
-          <Field id="password" label="Password" error={fieldError("password")}>
-            <input
-              id="password"
-              type="password"
-              autoComplete="new-password"
-              required
-              minLength={8}
-              aria-invalid={Boolean(fieldError("password"))}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
-          </Field>
+          <FormField id="name" label="Name" optional error={form.errorFor("name")}>
+            <input {...form.field("name")} type="text" autoComplete="name" maxLength={LIMITS.nameMaxChars} />
+          </FormField>
+          <FormField id="email" label="Email" error={form.errorFor("email")}>
+            <input {...form.field("email")} type="email" autoComplete="email" inputMode="email" maxLength={LIMITS.emailMaxChars} required />
+          </FormField>
+          <FormField id="password" label="Password" error={form.errorFor("password")}>
+            <input {...form.field("password")} type="password" autoComplete="new-password" required />
+          </FormField>
+          <ul className="password-checks" aria-label="Password requirements">
+            {passwordChecks(password).map((check) => (
+              <li key={check.label} className={check.met ? "met" : ""}>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  {check.met ? <path d="M20 6 9 17l-5-5" /> : <circle cx="12" cy="12" r="3" />}
+                </svg>
+                {check.label}
+                <span className="visually-hidden">{check.met ? " (met)" : " (not met)"}</span>
+              </li>
+            ))}
+          </ul>
+          <FormField id="confirmPassword" label="Confirm password" error={form.errorFor("confirmPassword")}>
+            <input {...form.field("confirmPassword")} type="password" autoComplete="new-password" required />
+          </FormField>
           <button className="btn-primary" type="submit" disabled={loading}>
-            {loading ? "Creating account…" : "Sign up"}
+            <ButtonLabel loading={loading} loadingText="Creating account…">Sign up</ButtonLabel>
           </button>
         </form>
 
@@ -87,15 +97,5 @@ export default function SignupPage() {
         </p>
       </div>
     </main>
-  );
-}
-
-function Field({ id, label, error, children }: { id: string; label: string; error: string | null; children: React.ReactNode }) {
-  return (
-    <div className="field">
-      <label htmlFor={id}>{label}</label>
-      {children}
-      {error && <div className="field-error">{error}</div>}
-    </div>
   );
 }

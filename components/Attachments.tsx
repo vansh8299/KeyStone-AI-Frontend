@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useMutation } from "@apollo/client";
 import { UPLOAD_CHAT_FILE } from "@/lib/graphql/rag";
 import { getErrorMessage } from "@/lib/errors";
+import { Spinner } from "@/components/Loader";
 import { FileRejectedError, MAX_FILES_PER_MESSAGE, fileKind, prepareFile, type FileKind } from "@/lib/fileUpload";
 
 export interface PendingAttachment {
@@ -51,8 +52,11 @@ export function usePendingAttachments() {
   const update = (localId: string, patch: Partial<PendingAttachment>) =>
     setItems((prev) => prev.map((a) => (a.localId === localId ? { ...a, ...patch } : a)));
 
+  // Latest items for callbacks created once (addFiles); synced after each render, never during it.
   const current = useRef<PendingAttachment[]>([]);
-  current.current = items;
+  useLayoutEffect(() => {
+    current.current = items;
+  }, [items]);
 
   const addFiles = useCallback(
     (files: File[]) => {
@@ -181,7 +185,11 @@ export function PendingAttachments({
         a.kind === "image" ? (
           <li key={a.localId} className={`pending-image pending-image-${a.status}`} title={a.error ?? a.filename}>
             <img src={a.previewUrl} alt={a.filename} />
-            {a.status === "uploading" && <span className="pending-image-overlay">Reading…</span>}
+            {a.status === "uploading" && (
+              <span className="pending-image-overlay" role="status" aria-label="Reading image">
+                <Spinner size={18} />
+              </span>
+            )}
             {a.status === "error" && <span className="pending-image-overlay pending-image-error">Failed</span>}
             <RemoveButton filename={a.filename} onClick={() => onRemove(a.localId)} />
           </li>
@@ -193,11 +201,13 @@ export function PendingAttachments({
             <span className="doc-text">
               <span className="doc-name">{a.filename}</span>
               <span className="doc-meta">
-                {a.status === "uploading"
-                  ? "Reading…"
-                  : a.status === "error"
-                    ? "Failed"
-                    : [docLabel(a.filename), pagesLabel(a.filename, a.pageCount)].filter(Boolean).join(" · ")}
+                {a.status === "uploading" ? (
+                  <>
+                    <Spinner size={10} /> Reading…
+                  </>
+                ) : a.status === "error"
+                  ? "Failed"
+                  : [docLabel(a.filename), pagesLabel(a.filename, a.pageCount)].filter(Boolean).join(" · ")}
               </span>
             </span>
             <RemoveButton filename={a.filename} onClick={() => onRemove(a.localId)} />

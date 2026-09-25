@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useApolloClient, useMutation, useQuery } from "@apollo/client";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { type AgentStatus, type AgentStreamRequest } from "@/lib/agentStream";
-import { useChatTurns } from "@/lib/chatTurns";
+import { useChatTurns, type ChatTurn } from "@/lib/chatTurns";
 import { getErrorMessage } from "@/lib/errors";
 import {
   CONVERSATION,
@@ -23,10 +23,12 @@ import {
   type MessageAttachmentView,
 } from "@/components/Attachments";
 import { attachmentUrl } from "@/lib/fileUpload";
-import AttachMenu from "@/components/AttachMenu";
+import AttachButton from "@/components/AttachButton";
 import FeedbackDialog from "@/components/FeedbackDialog";
 import CopyButton from "@/components/CopyButton";
+import { ChatSkeleton, TypingIndicator } from "@/components/Loader";
 import { useSpeechRecognition } from "@/lib/useSpeechRecognition";
+import { LIMITS } from "@/lib/validation";
 import { useToast } from "@/components/Toaster";
 import {
   SET_MESSAGE_FEEDBACK,
@@ -106,6 +108,25 @@ function toChatMessages(conversation: ServerConversation): ChatMessage[] {
   }));
 }
 
+/** The message a finished turn shows before (or instead of) the saved conversation. */
+function settledMessage(turn: ChatTurn): ChatMessage | null {
+  if (turn.phase === "done") {
+    const { result } = turn;
+    return result
+      ? {
+          id: turn.key,
+          role: "assistant",
+          content: result.answer,
+          toolsUsed: result.toolsUsed,
+          clarification: result.needsHumanInput ? "pending" : undefined,
+          local: true,
+        }
+      : null;
+  }
+  if (turn.phase === "streaming") return null;
+  return { id: turn.key, role: "assistant", content: getErrorMessage(turn.error), error: true, local: true };
+}
+
 export default function ChatView() {
   const router = useRouter();
   const client = useApolloClient();
@@ -120,19 +141,27 @@ export default function ChatView() {
   const [switchBranch] = useMutation(SWITCH_BRANCH);
   const [rewindConversation] = useMutation(REWIND_CONVERSATION);
   const [setMessageFeedback] = useMutation(SET_MESSAGE_FEEDBACK);
-  const { showError, showInfo } = useToast();
+  const { showError, showSuccess } = useToast();
   const [feedbackDialog, setFeedbackDialog] = useState<{ messageId: string; saving: boolean; error: string | null } | null>(null);
   const chatTurns = useChatTurns();
   const turn = chatTurns.turnFor(conversationId);
   const streaming = Boolean(turn?.attached);
   const [navigating, setNavigating] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const closeSidebar = useCallback(() => setSidebarOpen(false), []);
   const busy = streaming || navigating;
 
+  // Which conversation `messages` currently holds. State so render can compare it with the URL;
+  // the ref mirror is for async callbacks that must check it after an await.
+  const [loadedConversationId, setLoadedConversationId] = useState<string | undefined>(undefined);
   const loadedConversationIdRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    loadedConversationIdRef.current = loadedConversationId;
+  }, [loadedConversationId]);
 
   const { data: convoData, loading: convoLoading, error: convoError } = useQuery(CONVERSATION, {
     variables: { id: conversationId },
-    skip: !conversationId || loadedConversationIdRef.current === conversationId,
+    skip: !conversationId || loadedConversationId === conversationId,
     fetchPolicy: "network-only",
   });
 
@@ -175,49 +204,54 @@ export default function ChatView() {
     setEditing(null);
   }
 
-  useEffect(() => {
-    if (!conversationId) {
-      if (loadedConversationIdRef.current !== undefined) {
-        loadedConversationIdRef.current = undefined;
-        setMessages([]);
-        setIsRewound(false);
-        setEditing(null);
-      }
-      return;
-    }
-    if (loadedConversationIdRef.current === conversationId) return;
+  // Keep `messages` in step with the URL. This adjusts state during render (React's pattern for
+  // "state derived from a changing prop") instead of in an effect, so there's no extra render pass.
+  const serverConversation: ServerConversation | null =
+    conversationId && convoData?.conversation?.id === conversationId ? convoData.conversation : null;
+  if (!conversationId && loadedConversationId !== undefined) {
+    setLoadedConversationId(undefined);
+    setMessages([]);
+    setIsRewound(false);
+    setEditing(null);
+  } else if (conversationId && loadedConversationId !== conversationId && serverConversation) {
+    setLoadedConversationId(conversationId);
+    showConversation(serverConversation);
+  }
 
-    if (convoData?.conversation?.id === conversationId) {
-      loadedConversationIdRef.current = conversationId;
-      showConversation(convoData.conversation);
-      const last = convoData.conversation.messages[convoData.conversation.messages.length - 1];
-      if (last?.role === "USER") chatTurns.resume(conversationId);
-    }
-  }, [conversationId, convoData]);
+  // If the page was reloaded mid-answer, the last saved message is the user's: reattach to the
+  // still-running turn. Only side effects here — no state is set.
+  const resumeCandidate =
+    serverConversation && loadedConversationId === serverConversation.id ? serverConversation : null;
+  useEffect(() => {
+    if (!resumeCandidate) return;
+    const last = resumeCandidate.messages[resumeCandidate.messages.length - 1];
+    if (last?.role === "USER") chatTurns.resume(resumeCandidate.id);
+  }, [resumeCandidate?.id]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: streaming ? "auto" : "smooth" });
   }, [messages, streaming, turn?.content]);
 
   const conversationIdRef = useRef(conversationId);
-  conversationIdRef.current = conversationId;
+  useEffect(() => {
+    conversationIdRef.current = conversationId;
+  }, [conversationId]);
 
   function updateMessage(id: string, update: (m: ChatMessage) => ChatMessage) {
     setMessages((prev) => prev.map((m) => (m.id === id ? update(m) : m)));
   }
 
-  async function reloadConversation(id: string): Promise<boolean> {
+  /** Fresh copy of a conversation, or null if it failed or the user has since moved elsewhere. */
+  async function fetchConversation(id: string): Promise<ServerConversation | null> {
     try {
       const { data } = await client.query({
         query: CONVERSATION,
         variables: { id },
         fetchPolicy: "network-only",
       });
-      if (loadedConversationIdRef.current !== id || !data?.conversation) return false;
-      showConversation(data.conversation);
-      return true;
+      return loadedConversationIdRef.current === id ? data?.conversation ?? null : null;
     } catch {
-      return false;
+      return null;
     }
   }
 
@@ -249,52 +283,42 @@ export default function ChatView() {
       { ...request, conversationId },
       {
         onConversation: (id) => {
-          if (!conversationIdRef.current) loadedConversationIdRef.current = id;
+          if (!conversationIdRef.current) {
+            loadedConversationIdRef.current = id;
+            setLoadedConversationId(id);
+          }
         },
       }
     );
   }
 
+  // A finished turn stays visible (see `settledMessage`) until the saved conversation is fetched;
+  // then the server copy replaces it and the turn is dismissed in the same update, so nothing flickers.
+  const handledTurnRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!turn || turn.phase === "streaming") return;
-    chatTurns.dismiss(turn.key);
-    const id = turn.conversationId;
+    if (!turn || turn.phase === "streaming" || handledTurnRef.current === turn.key) return;
+    handledTurnRef.current = turn.key;
+    const settled = turn;
+    const id = settled.conversationId;
 
-    if (turn.phase === "done") {
-      const { result } = turn;
-      if (result) {
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: turn.key,
-            role: "assistant",
-            content: result.answer,
-            toolsUsed: result.toolsUsed,
-            clarification: result.needsHumanInput ? "pending" : undefined,
-            local: true,
-          },
-        ]);
-      }
-      if (id) reloadConversation(id);
-      return;
-    }
-
-    const errorMessage: ChatMessage = {
-      id: turn.key,
-      role: "assistant",
-      content: getErrorMessage(turn.error),
-      error: true,
-      local: true,
-    };
-    (id ? reloadConversation(id) : Promise.resolve(false)).then(() =>
-      setMessages((prev) => [...prev, errorMessage])
-    );
+    (id ? fetchConversation(id) : Promise.resolve(null)).then((conversation) => {
+      if (conversation) showConversation(conversation);
+      const local = settledMessage(settled);
+      // Errors are never saved server-side, and a successful answer only needs the local copy if
+      // the refetch failed.
+      if (local && (settled.phase !== "done" || !conversation)) setMessages((prev) => [...prev, local]);
+      chatTurns.dismiss(settled.key);
+    });
   }, [turn]);
 
-  const shownMessages: ChatMessage[] =
-    turn?.attached && turn.phase === "streaming"
-      ? [...messages, { id: turn.key, role: "assistant", content: turn.content, status: turn.status, streaming: true, local: true }]
-      : messages;
+  const liveMessage: ChatMessage | null = !turn
+    ? null
+    : turn.phase === "streaming"
+      ? turn.attached
+        ? { id: turn.key, role: "assistant", content: turn.content, status: turn.status, streaming: true, local: true }
+        : null
+      : settledMessage(turn);
+  const shownMessages: ChatMessage[] = liveMessage ? [...messages, liveMessage] : messages;
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -364,7 +388,7 @@ export default function ChatView() {
       });
       updateMessage(messageId, (m) => ({ ...m, feedback: data?.setMessageFeedback?.feedback ?? m.feedback }));
       setFeedbackDialog(null);
-      showInfo("Thanks for your feedback.");
+      showSuccess("Thanks for your feedback.");
     } catch (err) {
       setFeedbackDialog({ messageId, saving: false, error: getErrorMessage(err) });
     }
@@ -425,7 +449,11 @@ export default function ChatView() {
 
   return (
     <main className="dashboard-shell chat-page">
-      <Header active="chat" showChatActions />
+      <Header
+        active="chat"
+        onMenuClick={() => setSidebarOpen((o) => !o)}
+        menuOpen={sidebarOpen}
+      />
 
       <div className="chat-layout">
         <Sidebar
@@ -433,6 +461,8 @@ export default function ChatView() {
           loading={meLoading}
           activeId={conversationId}
           onDeleted={handleConversationDeleted}
+          mobileOpen={sidebarOpen}
+          onMobileClose={closeSidebar}
         />
 
         <div
@@ -449,7 +479,7 @@ export default function ChatView() {
         >
           <div className="chat-messages">
             <div className="chat-messages-column">
-              {showLoadingHistory && <p className="empty-state chat-empty">Loading conversation…</p>}
+              {showLoadingHistory && <ChatSkeleton />}
 
               {historyError && (
                 <div className="error-banner" role="alert">
@@ -492,7 +522,7 @@ export default function ChatView() {
                         <textarea
                           autoFocus
                           rows={3}
-                          maxLength={4000}
+                          maxLength={LIMITS.questionMaxChars}
                           value={editing.text}
                           onChange={(e) => setEditing({ id: m.id, text: e.target.value })}
                           onKeyDown={(e) => {
@@ -519,7 +549,7 @@ export default function ChatView() {
                       </form>
                     ) : m.streaming && !m.content ? (
                       <div className="chat-bubble-content chat-thinking">
-                        {m.status ? STATUS_LABELS[m.status] : "Thinking…"}
+                        <TypingIndicator label={m.status ? STATUS_LABELS[m.status] : undefined} />
                       </div>
                     ) : m.role === "assistant" && !m.error ? (
                       <div
@@ -713,7 +743,7 @@ export default function ChatView() {
             <PendingAttachments items={pendingFiles.items} onRemove={pendingFiles.remove} />
 
             <form className="chat-input-row" onSubmit={handleSubmit}>
-              <AttachMenu disabled={busy} canAddMore={pendingFiles.canAddMore} onFiles={pendingFiles.addFiles} />
+              <AttachButton disabled={busy} canAddMore={pendingFiles.canAddMore} onFiles={pendingFiles.addFiles} />
               <button
                 type="button"
                 className={`chat-attach chat-mic ${speech.listening ? "listening" : ""}`}
@@ -746,7 +776,8 @@ export default function ChatView() {
                       : "Ask a question…"
                 }
                 value={input}
-                maxLength={4000}
+                maxLength={LIMITS.questionMaxChars}
+                aria-describedby={input.length > LIMITS.questionMaxChars * 0.8 ? "composer-count" : undefined}
                 onChange={(e) => {
                   if (speech.listening) speech.cancel();
                   setInput(e.target.value);
@@ -763,6 +794,17 @@ export default function ChatView() {
                 Send
               </button>
             </form>
+            {input.length > LIMITS.questionMaxChars * 0.8 && (
+              <div
+                id="composer-count"
+                className={`composer-count ${input.length >= LIMITS.questionMaxChars ? "at-limit" : ""}`}
+                aria-live="polite"
+              >
+                {input.length >= LIMITS.questionMaxChars
+                  ? `Character limit reached (${LIMITS.questionMaxChars.toLocaleString()})`
+                  : `${(LIMITS.questionMaxChars - input.length).toLocaleString()} characters left`}
+              </div>
+            )}
           </div>
 
           {feedbackDialog && (() => {

@@ -3,6 +3,11 @@ import { GRAPHQL_URL } from "./session";
 export const MAX_FILES_PER_MESSAGE = 4;
 export const ACCEPTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"];
 export const DOCUMENT_EXTENSIONS = [".pdf", ".docx", ".txt", ".md", ".markdown", ".csv", ".xlsx", ".xls"];
+const IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".webp", ".gif"];
+
+/** `accept` value for a single picker that takes both images and documents. Extensions are listed
+ * alongside MIME types because some OS file dialogs filter only on one or the other. */
+export const CHAT_FILE_ACCEPT = [...ACCEPTED_IMAGE_TYPES, ...IMAGE_EXTENSIONS, ...DOCUMENT_EXTENSIONS].join(",");
 
 const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
 const MAX_DOCUMENT_BYTES = 20 * 1024 * 1024;
@@ -11,6 +16,21 @@ const REENCODE_ABOVE_BYTES = 1.5 * 1024 * 1024;
 const MAX_SOURCE_BYTES = 40 * 1024 * 1024;
 
 export class FileRejectedError extends Error {}
+
+/**
+ * SHA-256 (hex) of a file's bytes — the same hash the backend stores per document, so the page can
+ * spot content that's already in the knowledge base before uploading. Null when Web Crypto isn't
+ * available (non-secure context); the server still rejects duplicates in that case.
+ */
+export async function sha256Hex(file: Blob): Promise<string | null> {
+  if (typeof crypto === "undefined" || !crypto.subtle) return null;
+  try {
+    const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+    return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
+  } catch {
+    return null;
+  }
+}
 
 function loadImage(file: File): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {

@@ -1,39 +1,43 @@
 "use client";
 
-import { useState, useEffect, FormEvent } from "react";
+import { useState, useSyncExternalStore, FormEvent } from "react";
 import { useMutation } from "@apollo/client";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import ThemeToggle from "@/components/ThemeToggle";
+import { ButtonLabel } from "@/components/Loader";
+import FormField from "@/components/FormField";
 import { LOGIN } from "@/lib/graphql/auth";
 import { ApiError, toApiError } from "@/lib/errors";
 import { safeNextPath } from "@/lib/session";
+import { rules, useForm } from "@/lib/validation";
+
+const validators = { email: rules.email, password: rules.loginPassword };
+
+// Read straight from the URL (not useSearchParams, which would force a Suspense boundary for this
+// statically rendered page). The query string doesn't change while the page is open.
+const noSubscription = () => () => {};
+const sessionExpiredInUrl = () => new URLSearchParams(window.location.search).get("reason") === "expired";
 
 export default function LoginPage() {
   const router = useRouter();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const form = useForm({ email: "", password: "" }, validators);
   const [error, setError] = useState<ApiError | null>(null);
-  const [sessionExpired, setSessionExpired] = useState(false);
+  const sessionExpired = useSyncExternalStore(noSubscription, sessionExpiredInUrl, () => false);
   const [login, { loading }] = useMutation(LOGIN);
-
-  useEffect(() => {
-    setSessionExpired(new URLSearchParams(window.location.search).get("reason") === "expired");
-  }, []);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
+    if (!form.validateAll()) return;
     try {
-      await login({ variables: { input: { email, password } } });
+      await login({ variables: { input: { email: form.values.email.trim(), password: form.values.password } } });
       router.push(safeNextPath());
     } catch (err) {
-      setError(toApiError(err));
+      const apiError = toApiError(err);
+      if (!form.applyServerError(apiError.field, apiError.message)) setError(apiError);
     }
   }
-
-  const emailError = error?.field === "input.email" ? error.message : null;
-  const bannerError = error && !emailError ? error : null;
 
   return (
     <main className="auth-shell">
@@ -47,39 +51,21 @@ export default function LoginPage() {
             Your session has expired. Please log in again.
           </div>
         )}
-        {bannerError && (
+        {error && (
           <div className="error-banner" role="alert">
-            {bannerError.message}
+            {error.message}
           </div>
         )}
 
         <form onSubmit={handleSubmit} noValidate>
-          <div className="field">
-            <label htmlFor="email">Email</label>
-            <input
-              id="email"
-              type="email"
-              autoComplete="email"
-              required
-              aria-invalid={Boolean(emailError)}
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-            />
-            {emailError && <div className="field-error">{emailError}</div>}
-          </div>
-          <div className="field">
-            <label htmlFor="password">Password</label>
-            <input
-              id="password"
-              type="password"
-              autoComplete="current-password"
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
-          </div>
+          <FormField id="email" label="Email" error={form.errorFor("email")}>
+            <input {...form.field("email")} type="email" autoComplete="email" inputMode="email" maxLength={254} required />
+          </FormField>
+          <FormField id="password" label="Password" error={form.errorFor("password")}>
+            <input {...form.field("password")} type="password" autoComplete="current-password" required />
+          </FormField>
           <button className="btn-primary" type="submit" disabled={loading}>
-            {loading ? "Logging in…" : "Log in"}
+            <ButtonLabel loading={loading} loadingText="Logging in…">Log in</ButtonLabel>
           </button>
         </form>
 

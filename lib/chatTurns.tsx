@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, ReactNode, useCallback, useContext, useMemo, useRef, useState } from "react";
+import { createContext, ReactNode, useCallback, useContext, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { useApolloClient } from "@apollo/client";
 import {
@@ -48,10 +48,13 @@ export function ChatTurnsProvider({ children }: { children: ReactNode }) {
   const { showInfo, showError } = useToast();
   const [turns, setTurns] = useState<ChatTurn[]>([]);
 
+  // Latest values for stream callbacks that outlive the render that created them.
   const pathnameRef = useRef(pathname);
-  pathnameRef.current = pathname;
   const turnsRef = useRef(turns);
-  turnsRef.current = turns;
+  useLayoutEffect(() => {
+    pathnameRef.current = pathname;
+    turnsRef.current = turns;
+  }, [pathname, turns]);
 
   const update = useCallback((key: string, change: (t: ChatTurn) => ChatTurn) => {
     setTurns((prev) => prev.map((t) => (t.key === key ? change(t) : t)));

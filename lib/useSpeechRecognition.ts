@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 
 interface SpeechRecognitionAlternative {
   transcript: string;
@@ -48,19 +48,24 @@ const ERROR_MESSAGES: Record<string, string> = {
   "language-not-supported": "Voice input doesn't support your browser's language.",
 };
 
+// Browser support can't change while the page is open, so there's nothing to subscribe to.
+const noSubscription = () => () => {};
+const detectSupport = () => getRecognitionClass() !== null && window.isSecureContext;
+
 export interface SpeechRecognitionHandlers {
   onTranscript: (finalText: string, interimText: string) => void;
 }
 
 export function useSpeechRecognition({ onTranscript }: SpeechRecognitionHandlers) {
-  const [supported, setSupported] = useState(false);
+  // false on the server; the browser's answer takes over after hydration.
+  const supported = useSyncExternalStore(noSubscription, detectSupport, () => false);
   const [listening, setListening] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const recognition = useRef<SpeechRecognitionInstance | null>(null);
   const handler = useRef(onTranscript);
-  handler.current = onTranscript;
-
-  useEffect(() => setSupported(getRecognitionClass() !== null && window.isSecureContext), []);
+  useLayoutEffect(() => {
+    handler.current = onTranscript;
+  }, [onTranscript]);
 
   useEffect(() => () => recognition.current?.abort(), []);
 
