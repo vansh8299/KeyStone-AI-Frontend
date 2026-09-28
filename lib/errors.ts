@@ -7,6 +7,7 @@ export type ApiErrorCode =
   | "NOT_FOUND"
   | "BAD_USER_INPUT"
   | "CONFLICT"
+  | "EMAIL_NOT_VERIFIED"
   | "RATE_LIMITED"
   | "PAYLOAD_TOO_LARGE"
   | "SERVICE_UNAVAILABLE"
@@ -19,6 +20,10 @@ export interface ApiError {
   message: string;
   field?: string;
   errorId?: string;
+  /** For EMAIL_NOT_VERIFIED: the address the verification code was sent to. */
+  email?: string;
+  /** For RATE_LIMITED: how long until the request may be retried. */
+  retryAfterSeconds?: number;
 }
 
 const FALLBACK_MESSAGES: Record<string, string> = {
@@ -41,6 +46,8 @@ function fromGraphQLError(error: GraphQLFormattedError): ApiError {
     message: error.message || FALLBACK_MESSAGES[code] || FALLBACK_MESSAGES.UNKNOWN,
     field: typeof ext.field === "string" ? ext.field : undefined,
     errorId: typeof ext.errorId === "string" ? ext.errorId : undefined,
+    email: typeof ext.email === "string" ? ext.email : undefined,
+    retryAfterSeconds: typeof ext.retryAfterSeconds === "number" ? ext.retryAfterSeconds : undefined,
   };
 }
 

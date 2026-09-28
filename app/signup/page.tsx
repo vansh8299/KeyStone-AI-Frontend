@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, FormEvent } from "react";
-import { useApolloClient, useMutation } from "@apollo/client";
+import { useMutation } from "@apollo/client";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import ThemeToggle from "@/components/ThemeToggle";
@@ -9,7 +9,7 @@ import { ButtonLabel } from "@/components/Loader";
 import FormField from "@/components/FormField";
 import { SIGNUP } from "@/lib/graphql/auth";
 import { ApiError, toApiError } from "@/lib/errors";
-import { safeNextPath } from "@/lib/session";
+import { setPendingVerificationEmail } from "@/lib/session";
 import { LIMITS, passwordChecks, rules, useForm, type Validator } from "@/lib/validation";
 
 type SignupValues = { name: string; email: string; password: string; confirmPassword: string };
@@ -24,7 +24,6 @@ const validators: { [K in keyof SignupValues]: Validator<SignupValues> } = {
 
 export default function SignupPage() {
   const router = useRouter();
-  const client = useApolloClient();
   const form = useForm<SignupValues>({ name: "", email: "", password: "", confirmPassword: "" }, validators);
   const [error, setError] = useState<ApiError | null>(null);
   const [signup, { loading }] = useMutation(SIGNUP);
@@ -35,11 +34,10 @@ export default function SignupPage() {
     if (!form.validateAll()) return;
     const { name, email, password } = form.values;
     try {
-      await signup({ variables: { input: { email: email.trim(), password, name: name.trim() || undefined } } });
-      // Drop anything cached before signing in (e.g. the "signed out" answer, or a previous
-      // user's data) so the app starts from the new session.
-      await client.clearStore();
-      router.push(safeNextPath());
+      const { data } = await signup({ variables: { input: { email: email.trim(), password, name: name.trim() || undefined } } });
+      setPendingVerificationEmail(data?.signup.email ?? email.trim());
+      // Keep ?next= so verifying lands where the user was heading.
+      router.push(`/verify-email${window.location.search}`);
     } catch (err) {
       const apiError = toApiError(err);
       if (!form.applyServerError(apiError.field, apiError.message)) setError(apiError);

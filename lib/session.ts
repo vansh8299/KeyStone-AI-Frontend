@@ -20,7 +20,7 @@ export function refreshSession(): Promise<boolean> {
   return inFlight;
 }
 
-const AUTH_PAGES = ["/login", "/signup"];
+const AUTH_PAGES = ["/login", "/signup", "/verify-email", "/forgot-password"];
 
 export function redirectToLogin(reason: "expired" = "expired") {
   if (typeof window === "undefined") return;
@@ -34,4 +34,32 @@ export function safeNextPath(fallback = "/chat"): string {
   if (typeof window === "undefined") return fallback;
   const next = new URLSearchParams(window.location.search).get("next");
   return next && next.startsWith("/") && !next.startsWith("//") ? next : fallback;
+}
+
+// The address awaiting verification is handed from sign-up / login to /verify-email through
+// sessionStorage rather than the URL, so it doesn't end up in history, logs or referrers.
+const PENDING_EMAIL_KEY = "pendingVerificationEmail";
+
+export function setPendingVerificationEmail(email: string) {
+  try {
+    sessionStorage.setItem(PENDING_EMAIL_KEY, email);
+  } catch {
+    // Storage unavailable: the verify page asks for the email instead.
+  }
+}
+
+export function getPendingVerificationEmail(): string {
+  try {
+    return sessionStorage.getItem(PENDING_EMAIL_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+export function clearPendingVerificationEmail() {
+  try {
+    sessionStorage.removeItem(PENDING_EMAIL_KEY);
+  } catch {
+    // Nothing to clear.
+  }
 }
