@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, FormEvent } from "react";
-import { useApolloClient, useMutation } from "@apollo/client";
+import { useMutation } from "@apollo/client";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import ThemeToggle from "@/components/ThemeToggle";
@@ -9,7 +9,7 @@ import { ButtonLabel } from "@/components/Loader";
 import FormField from "@/components/FormField";
 import { SIGNUP } from "@/lib/graphql/auth";
 import { ApiError, toApiError } from "@/lib/errors";
-import { safeNextPath } from "@/lib/session";
+import { setPendingVerificationEmail } from "@/lib/session";
 import { LIMITS, passwordChecks, rules, useForm, type Validator } from "@/lib/validation";
 
 type SignupValues = { name: string; email: string; password: string; confirmPassword: string };
@@ -24,10 +24,13 @@ const validators: { [K in keyof SignupValues]: Validator<SignupValues> } = {
 
 export default function SignupPage() {
   const router = useRouter();
-  const client = useApolloClient();
   const form = useForm<SignupValues>({ name: "", email: "", password: "", confirmPassword: "" }, validators);
   const [error, setError] = useState<ApiError | null>(null);
   const [signup, { loading }] = useMutation(SIGNUP);
+  // Stays true after a successful sign-up until the verify page replaces this one, so the button
+  // doesn't flip back to "Sign up" while it loads.
+  const [redirecting, setRedirecting] = useState(false);
+  const busy = loading || redirecting;
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -35,12 +38,13 @@ export default function SignupPage() {
     if (!form.validateAll()) return;
     const { name, email, password } = form.values;
     try {
-      await signup({ variables: { input: { email: email.trim(), password, name: name.trim() || undefined } } });
-      // Drop anything cached before signing in (e.g. the "signed out" answer, or a previous
-      // user's data) so the app starts from the new session.
-      await client.clearStore();
-      router.push(safeNextPath());
+      const { data } = await signup({ variables: { input: { email: email.trim(), password, name: name.trim() || undefined } } });
+      setRedirecting(true);
+      setPendingVerificationEmail(data?.signup.email ?? email.trim());
+      // Keep ?next= so verifying lands where the user was heading.
+      router.push(`/verify-email${window.location.search}`);
     } catch (err) {
+      setRedirecting(false);
       const apiError = toApiError(err);
       if (!form.applyServerError(apiError.field, apiError.message)) setError(apiError);
     }
@@ -69,13 +73,13 @@ export default function SignupPage() {
 
         <form onSubmit={handleSubmit} noValidate>
           <FormField id="name" label="Name" optional error={form.errorFor("name")}>
-            <input {...form.field("name")} type="text" autoComplete="name" maxLength={LIMITS.nameMaxChars} />
+            <input {...form.field("name")} type="text" autoComplete="name" maxLength={LIMITS.nameMaxChars} readOnly={busy} />
           </FormField>
           <FormField id="email" label="Email" error={form.errorFor("email")}>
-            <input {...form.field("email")} type="email" autoComplete="email" inputMode="email" maxLength={LIMITS.emailMaxChars} required />
+            <input {...form.field("email")} type="email" autoComplete="email" inputMode="email" maxLength={LIMITS.emailMaxChars} readOnly={busy} required />
           </FormField>
           <FormField id="password" label="Password" error={form.errorFor("password")}>
-            <input {...form.field("password")} type="password" autoComplete="new-password" required />
+            <input {...form.field("password")} type="password" autoComplete="new-password" readOnly={busy} required />
           </FormField>
           <ul className="password-checks" aria-label="Password requirements">
             {passwordChecks(password).map((check) => (
@@ -89,10 +93,12 @@ export default function SignupPage() {
             ))}
           </ul>
           <FormField id="confirmPassword" label="Confirm password" error={form.errorFor("confirmPassword")}>
-            <input {...form.field("confirmPassword")} type="password" autoComplete="new-password" required />
+            <input {...form.field("confirmPassword")} type="password" autoComplete="new-password" readOnly={busy} required />
           </FormField>
-          <button className="btn-primary" type="submit" disabled={loading}>
-            <ButtonLabel loading={loading} loadingText="Creating account…">Sign up</ButtonLabel>
+          <button className="btn-primary" type="submit" disabled={busy} aria-busy={busy}>
+            <ButtonLabel loading={busy} loadingText={redirecting ? "Code sent — opening verification…" : "Creating account…"}>
+              Sign up
+            </ButtonLabel>
           </button>
         </form>
 

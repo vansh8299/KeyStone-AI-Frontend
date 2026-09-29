@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useApolloClient, useMutation, useQuery } from "@apollo/client";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
@@ -15,7 +15,8 @@ import {
 import Header from "@/components/Header";
 import ServerUnavailable from "@/components/ServerUnavailable";
 import { useCurrentUser } from "@/lib/useCurrentUser";
-import MarkdownMessage from "@/components/MarkdownMessage";
+import { useSmoothText } from "@/lib/useSmoothText";
+import { CONVERSATION_PAGE_SIZE, ME, MORE_CONVERSATIONS } from "@/lib/graphql/auth";
 import Sidebar, { type ConversationSummary } from "@/components/Sidebar";
 import {
   MessageAttachments,
@@ -27,7 +28,34 @@ import { attachmentUrl } from "@/lib/fileUpload";
 import AttachButton from "@/components/AttachButton";
 import FeedbackDialog from "@/components/FeedbackDialog";
 import CopyButton from "@/components/CopyButton";
-import { ChatSkeleton, TypingIndicator } from "@/components/Loader";
+import { ChatSkeleton, Spinner, TypingIndicator } from "@/components/Loader";
+
+// The Markdown renderer (react-markdown + remark, the largest part of this screen's JavaScript)
+// loads in its own chunk so the chat shell doesn't wait for it; ChatView starts fetching it on
+// mount, and until it arrives replies show as plain text.
+const loadMarkdown = () => import("@/components/MarkdownMessage");
+const MarkdownMessage = lazy(loadMarkdown);
+
+/**
+ * An assistant reply; while streaming, the text types out smoothly (see useSmoothText). `checking`
+ * shows the guardrail-review note, once the text has finished typing out.
+ */
+function AnswerText({ content, streaming, checking }: { content: string; streaming: boolean; checking: boolean }) {
+  const text = useSmoothText(content, streaming);
+  return (
+    <>
+      <Suspense fallback={<div className="markdown markdown-plain">{text}</div>}>
+        <MarkdownMessage content={text} />
+      </Suspense>
+      {checking && text.length === content.length && (
+        <div className="chat-checking" role="status">
+          <Spinner size={11} />
+          {STATUS_LABELS.CHECKING_ANSWER}
+        </div>
+      )}
+    </>
+  );
+}
 import { useSpeechRecognition } from "@/lib/useSpeechRecognition";
 import { LIMITS } from "@/lib/validation";
 import { useToast } from "@/components/Toaster";
@@ -136,6 +164,9 @@ export default function ChatView() {
 
   const auth = useCurrentUser();
   const refetchMe = auth.refetch;
+  useEffect(() => {
+    loadMarkdown().catch(() => {});
+  }, []);
   const [switchBranch] = useMutation(SWITCH_BRANCH);
   const [rewindConversation] = useMutation(REWIND_CONVERSATION);
   const [setMessageFeedback] = useMutation(SET_MESSAGE_FEEDBACK);
@@ -444,6 +475,41 @@ export default function ChatView() {
 
   const conversations: ConversationSummary[] = auth.me?.conversations ?? [];
 
+  // The sidebar loads a page at a time. A full page means there may be more; endId remembers the
+  // last conversation when "Show more" came back short, so the button returns if the list changes.
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [endId, setEndId] = useState<string | null>(null);
+  const lastConversationId = conversations[conversations.length - 1]?.id;
+  const hasMoreConversations =
+    conversations.length > 0 && conversations.length % CONVERSATION_PAGE_SIZE === 0 && lastConversationId !== endId;
+
+  async function loadMoreConversations() {
+    const last = conversations[conversations.length - 1];
+    if (!last || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const { data } = await client.query({
+        query: MORE_CONVERSATIONS,
+        variables: { after: last.id },
+        fetchPolicy: "network-only",
+      });
+      const page: ConversationSummary[] = data?.me?.conversations ?? [];
+      let lastId = last.id;
+      client.cache.updateQuery({ query: ME }, (current) => {
+        if (!current?.me) return current;
+        const seen = new Set(current.me.conversations.map((c: ConversationSummary) => c.id));
+        const merged = [...current.me.conversations, ...page.filter((c) => !seen.has(c.id))];
+        lastId = merged[merged.length - 1]?.id ?? lastId;
+        return { ...current, me: { ...current.me, conversations: merged } };
+      });
+      if (page.length < CONVERSATION_PAGE_SIZE) setEndId(lastId);
+    } catch (err) {
+      showError(err);
+    } finally {
+      setLoadingMore(false);
+    }
+  }
+
   const showLoadingHistory = Boolean(conversationId) && convoLoading && messages.length === 0;
   const historyError =
     conversationId && convoError && messages.length === 0 ? getErrorMessage(convoError) : null;
@@ -463,6 +529,9 @@ export default function ChatView() {
         <Sidebar
           conversations={conversations}
           loading={auth.status === "loading"}
+          hasMore={hasMoreConversations}
+          loadingMore={loadingMore}
+          onLoadMore={loadMoreConversations}
           activeId={conversationId}
           onDeleted={handleConversationDeleted}
           mobileOpen={sidebarOpen}
@@ -561,7 +630,11 @@ export default function ChatView() {
                           m.clarification === "pending" ? "chat-bubble-hitl" : ""
                         } ${m.streaming ? "chat-bubble-streaming" : ""}`}
                       >
-                        <MarkdownMessage content={m.content} />
+                        <AnswerText
+                          content={m.content}
+                          streaming={Boolean(m.streaming)}
+                          checking={Boolean(m.streaming) && m.status === "CHECKING_ANSWER"}
+                        />
                       </div>
                     ) : (
                       <>

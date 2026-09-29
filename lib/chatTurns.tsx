@@ -123,6 +123,7 @@ export function ChatTurnsProvider({ children }: { children: ReactNode }) {
     onConversation: () => update(key, (t) => ({ ...t, attached: true })),
     onToken: (text) => update(key, (t) => ({ ...t, attached: true, content: t.content + text })),
     onStatus: (status) => update(key, (t) => ({ ...t, attached: true, status })),
+    onReset: () => update(key, (t) => ({ ...t, attached: true, content: "" })),
   });
 
   const settleFromServer = async (key: string, conversationId: string, originalError: unknown) => {

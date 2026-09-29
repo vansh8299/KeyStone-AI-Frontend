@@ -12,6 +12,7 @@ export const LIMITS = {
   nameMaxChars: 100,
   passwordMinChars: 8,
   passwordMaxBytes: 72,
+  otpLength: 6,
   ingestTitleMaxChars: 200,
   ingestTextMaxChars: 200_000,
   questionMaxChars: 4000,
@@ -35,6 +36,13 @@ export const rules = {
   },
 
   loginPassword: (value: string): string | null => (value ? null : "Password is required."),
+
+  code: (value: string): string | null => {
+    const v = value.trim();
+    if (!v) return "Enter the code from the email.";
+    if (!new RegExp(`^[0-9]{${LIMITS.otpLength}}$`).test(v)) return `The code is ${LIMITS.otpLength} digits.`;
+    return null;
+  },
 
   newPassword: (value: string): string | null => {
     if (!value) return "Password is required.";

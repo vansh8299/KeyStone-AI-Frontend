@@ -58,6 +58,10 @@ interface SidebarProps {
   onDeleted: (id: string) => void | Promise<unknown>;
   mobileOpen?: boolean;
   onMobileClose?: () => void;
+  /** Whether older conversations may exist beyond those loaded. */
+  hasMore?: boolean;
+  loadingMore?: boolean;
+  onLoadMore?: () => void;
 }
 
 export default function Sidebar({
@@ -67,6 +71,9 @@ export default function Sidebar({
   onDeleted,
   mobileOpen = false,
   onMobileClose,
+  hasMore = false,
+  loadingMore = false,
+  onLoadMore,
 }: SidebarProps) {
   const [deleteConversation] = useMutation(DELETE_CONVERSATION);
   const { showSuccess } = useToast();
@@ -164,6 +171,20 @@ export default function Sidebar({
                 </button>
               </li>
             ))}
+            {hasMore && onLoadMore && (
+              <li className="sidebar-load-more">
+                <button type="button" className="btn-ghost" onClick={onLoadMore} disabled={loadingMore} aria-busy={loadingMore}>
+                  {loadingMore ? (
+                    <span className="btn-loading">
+                      <Spinner size={12} />
+                      Loading…
+                    </span>
+                  ) : (
+                    "Show more"
+                  )}
+                </button>
+              </li>
+            )}
           </ul>
         )}
       </aside>
