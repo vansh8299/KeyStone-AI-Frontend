@@ -36,6 +36,10 @@ export default function ForgotPasswordPage() {
   const cooldown = useCooldown();
   const [requestReset, { loading: requesting }] = useMutation(REQUEST_PASSWORD_RESET);
   const [resetPassword, { loading: resetting }] = useMutation(RESET_PASSWORD);
+  // Stays true after a successful reset until the login page replaces this one, so the button
+  // doesn't flip back to "Reset password" while it loads.
+  const [redirecting, setRedirecting] = useState(false);
+  const busy = resetting || redirecting;
 
   async function sendCode(email: string): Promise<boolean> {
     setError(null);
@@ -76,8 +80,10 @@ export default function ForgotPasswordPage() {
     const { email, code, newPassword } = form.values;
     try {
       await resetPassword({ variables: { input: { email, code: code.trim(), newPassword } } });
+      setRedirecting(true);
       router.push("/login?reason=reset");
     } catch (err) {
+      setRedirecting(false);
       const apiError = toApiError(err);
       if (!form.applyServerError(apiError.field, apiError.message)) setError(apiError);
     }
@@ -136,10 +142,10 @@ export default function ForgotPasswordPage() {
         {banners}
         <form onSubmit={handleReset} noValidate>
           <FormField id="code" label="Reset code" error={form.errorFor("code")}>
-            <CodeInput {...form.field("code")} autoFocus required />
+            <CodeInput {...form.field("code")} autoFocus readOnly={busy} required />
           </FormField>
           <FormField id="newPassword" label="New password" error={form.errorFor("newPassword")}>
-            <input {...form.field("newPassword")} type="password" autoComplete="new-password" required />
+            <input {...form.field("newPassword")} type="password" autoComplete="new-password" readOnly={busy} required />
           </FormField>
           <ul className="password-checks" aria-label="Password requirements">
             {passwordChecks(form.values.newPassword).map((check) => (
@@ -153,15 +159,17 @@ export default function ForgotPasswordPage() {
             ))}
           </ul>
           <FormField id="confirmPassword" label="Confirm new password" error={form.errorFor("confirmPassword")}>
-            <input {...form.field("confirmPassword")} type="password" autoComplete="new-password" required />
+            <input {...form.field("confirmPassword")} type="password" autoComplete="new-password" readOnly={busy} required />
           </FormField>
-          <button className="btn-primary" type="submit" disabled={resetting}>
-            <ButtonLabel loading={resetting} loadingText="Resetting…">Reset password</ButtonLabel>
+          <button className="btn-primary" type="submit" disabled={busy} aria-busy={busy}>
+            <ButtonLabel loading={busy} loadingText={redirecting ? "Password reset — opening login…" : "Resetting…"}>
+              Reset password
+            </ButtonLabel>
           </button>
         </form>
         <p className="auth-switch">
           Didn&apos;t get it?{" "}
-          <button type="button" className="link-button" onClick={handleResend} disabled={requesting || cooldown.remaining > 0}>
+          <button type="button" className="link-button" onClick={handleResend} disabled={busy || requesting || cooldown.remaining > 0}>
             {cooldown.remaining > 0 ? `Resend code in ${cooldown.remaining}s` : requesting ? "Sending…" : "Resend code"}
           </button>
         </p>
@@ -169,6 +177,7 @@ export default function ForgotPasswordPage() {
           <button
             type="button"
             className="link-button"
+            disabled={busy}
             onClick={() => {
               setError(null);
               setNotice(null);

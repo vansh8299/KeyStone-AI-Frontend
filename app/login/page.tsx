@@ -26,6 +26,10 @@ export default function LoginPage() {
   const [error, setError] = useState<ApiError | null>(null);
   const reason = useSyncExternalStore(noSubscription, reasonInUrl, () => null);
   const [login, { loading }] = useMutation(LOGIN);
+  // Label shown from a successful response until the next page replaces this one, so the button
+  // doesn't flip back to "Log in" while the app loads.
+  const [redirecting, setRedirecting] = useState<string | null>(null);
+  const busy = loading || redirecting !== null;
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -33,6 +37,7 @@ export default function LoginPage() {
     if (!form.validateAll()) return;
     try {
       await login({ variables: { input: { email: form.values.email.trim(), password: form.values.password } } });
+      setRedirecting("Signed in — opening your chats…");
       // Drop anything cached before signing in (e.g. the "signed out" answer, or a previous
       // user's data) so the app starts from the new session.
       await client.clearStore();
@@ -40,10 +45,12 @@ export default function LoginPage() {
     } catch (err) {
       const apiError = toApiError(err);
       if (apiError.code === "EMAIL_NOT_VERIFIED") {
+        setRedirecting("Opening email verification…");
         setPendingVerificationEmail(apiError.email ?? form.values.email.trim());
         router.push(`/verify-email${window.location.search}`);
         return;
       }
+      setRedirecting(null);
       if (!form.applyServerError(apiError.field, apiError.message)) setError(apiError);
     }
   }
@@ -73,16 +80,16 @@ export default function LoginPage() {
 
         <form onSubmit={handleSubmit} noValidate>
           <FormField id="email" label="Email" error={form.errorFor("email")}>
-            <input {...form.field("email")} type="email" autoComplete="email" inputMode="email" maxLength={254} required />
+            <input {...form.field("email")} type="email" autoComplete="email" inputMode="email" maxLength={254} readOnly={busy} required />
           </FormField>
           <FormField id="password" label="Password" error={form.errorFor("password")}>
-            <input {...form.field("password")} type="password" autoComplete="current-password" required />
+            <input {...form.field("password")} type="password" autoComplete="current-password" readOnly={busy} required />
           </FormField>
           <div className="auth-forgot">
             <Link href="/forgot-password">Forgot password?</Link>
           </div>
-          <button className="btn-primary" type="submit" disabled={loading}>
-            <ButtonLabel loading={loading} loadingText="Logging in…">Log in</ButtonLabel>
+          <button className="btn-primary" type="submit" disabled={busy} aria-busy={busy}>
+            <ButtonLabel loading={busy} loadingText={redirecting ?? "Logging in…"}>Log in</ButtonLabel>
           </button>
         </form>
 

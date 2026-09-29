@@ -24,9 +24,13 @@ export default function VerifyEmailPage() {
   const [knownEmail, setKnownEmail] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // Stays true after a successful verify until the next page replaces this one, so the button
+  // doesn't flip back to "Verify email" while the app loads the chat.
+  const [redirecting, setRedirecting] = useState(false);
   const cooldown = useCooldown(RESEND_COOLDOWN_SECONDS);
   const [verifyEmail, { loading }] = useMutation(VERIFY_EMAIL);
   const [resendCode, { loading: resending }] = useMutation(RESEND_VERIFICATION_CODE);
+  const busy = loading || redirecting;
 
   // Picked up after mount: sessionStorage isn't available during prerendering.
   useEffect(() => {
@@ -45,10 +49,12 @@ export default function VerifyEmailPage() {
     if (!form.validateAll()) return;
     try {
       await verifyEmail({ variables: { input: { email: form.values.email.trim(), code: form.values.code.trim() } } });
+      setRedirecting(true);
       clearPendingVerificationEmail();
       await client.clearStore();
       router.push(safeNextPath());
     } catch (err) {
+      setRedirecting(false);
       const apiError = toApiError(err);
       if (!form.applyServerError(apiError.field, apiError.message)) setError(apiError);
     }
@@ -107,16 +113,18 @@ export default function VerifyEmailPage() {
             </FormField>
           )}
           <FormField id="code" label="Verification code" error={form.errorFor("code")}>
-            <CodeInput {...form.field("code")} autoFocus={knownEmail} required />
+            <CodeInput {...form.field("code")} autoFocus={knownEmail} readOnly={busy} required />
           </FormField>
-          <button className="btn-primary" type="submit" disabled={loading}>
-            <ButtonLabel loading={loading} loadingText="Verifying…">Verify email</ButtonLabel>
+          <button className="btn-primary" type="submit" disabled={busy} aria-busy={busy}>
+            <ButtonLabel loading={busy} loadingText={redirecting ? "Verified — signing you in…" : "Verifying…"}>
+              Verify email
+            </ButtonLabel>
           </button>
         </form>
 
         <p className="auth-switch">
           Didn&apos;t get it?{" "}
-          <button type="button" className="link-button" onClick={handleResend} disabled={resending || cooldown.remaining > 0}>
+          <button type="button" className="link-button" onClick={handleResend} disabled={busy || resending || cooldown.remaining > 0}>
             {cooldown.remaining > 0 ? `Resend code in ${cooldown.remaining}s` : resending ? "Sending…" : "Resend code"}
           </button>
         </p>
