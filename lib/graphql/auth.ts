@@ -56,13 +56,31 @@ export const LOGOUT = gql`
   }
 `;
 
+/** Conversations the sidebar loads at a time; "Show more" fetches the next page. */
+export const CONVERSATION_PAGE_SIZE = 30;
+
+// The page size is written into the query (not a variable) so every read of ME — useQuery,
+// readQuery, refetchQueries — addresses the same cached field.
 export const ME = gql`
   query Me {
     me {
       id
       email
       name
-      conversations {
+      conversations(first: ${CONVERSATION_PAGE_SIZE}) {
+        id
+        title
+        updatedAt
+      }
+    }
+  }
+`;
+
+export const MORE_CONVERSATIONS = gql`
+  query MoreConversations($after: ID!) {
+    me {
+      id
+      conversations(first: ${CONVERSATION_PAGE_SIZE}, after: $after) {
         id
         title
         updatedAt

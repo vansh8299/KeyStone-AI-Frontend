@@ -18,8 +18,10 @@ const RETRY_DELAYS_MS = [1000, 2000, 4000];
 export function useCurrentUser({ redirectIfAnonymous = true }: { redirectIfAnonymous?: boolean } = {}) {
   const router = useRouter();
   const pathname = usePathname();
+  // Show the cached user and sidebar at once when moving between pages, and refresh them in the
+  // background. Login and logout clear the cache, so it never holds another session's data.
   const { data, loading, error, refetch } = useQuery(ME, {
-    fetchPolicy: "network-only",
+    fetchPolicy: "cache-and-network",
     notifyOnNetworkStatusChange: true,
   });
 

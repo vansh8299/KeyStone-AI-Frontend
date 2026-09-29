@@ -23,6 +23,8 @@ export interface AgentStreamHandlers {
   onConversation?: (conversationId: string) => void;
   onToken?: (text: string) => void;
   onStatus?: (status: AgentStatus) => void;
+  /** Discard the text received so far: the review rejected the draft; the approved answer follows. */
+  onReset?: () => void;
 }
 
 export type AgentStatus = "CHECKING_ANSWER" | "IMPROVING_ANSWER";
@@ -31,13 +33,14 @@ type AgentStreamEvent =
   | { type: "CONVERSATION"; conversationId: string }
   | { type: "TOKEN"; text: string }
   | { type: "STATUS"; status: AgentStatus }
+  | { type: "RESET" }
   | { type: "DONE"; result: AgentDone };
 
 function runStream(
   query: DocumentNode,
   field: "askAgentStream" | "conversationTurn",
   variables: Record<string, unknown>,
-  { onConversation, onToken, onStatus }: AgentStreamHandlers
+  { onConversation, onToken, onStatus, onReset }: AgentStreamHandlers
 ): Promise<AgentDone | null> {
   return new Promise((resolve, reject) => {
     let done: AgentDone | null = null;
@@ -73,6 +76,9 @@ function runStream(
               break;
             case "STATUS":
               onStatus?.(event.status);
+              break;
+            case "RESET":
+              onReset?.();
               break;
             case "DONE":
               done = event.result;
