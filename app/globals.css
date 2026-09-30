@@ -3067,6 +3067,19 @@ a.message-doc:hover {
   gap: 14px;
 }
 
+.doc-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.doc-status-failed {
+  color: var(--danger);
+}
+
 .doc-item .doc-item-text {
   flex: 1;
   min-width: 0;

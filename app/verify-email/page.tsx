@@ -5,12 +5,13 @@ import { useApolloClient, useMutation } from "@apollo/client";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import ThemeToggle from "@/components/ThemeToggle";
-import { ButtonLabel } from "@/components/Loader";
+import { ButtonLabel, PageLoader } from "@/components/Loader";
 import FormField from "@/components/FormField";
 import CodeInput from "@/components/CodeInput";
 import { RESEND_VERIFICATION_CODE, VERIFY_EMAIL } from "@/lib/graphql/auth";
 import { ApiError, toApiError } from "@/lib/errors";
-import { clearPendingVerificationEmail, getPendingVerificationEmail, safeNextPath } from "@/lib/session";
+import { clearPendingVerificationEmail, getPendingVerificationEmail, markSignedIn, safeNextPath } from "@/lib/session";
+import { useGuestOnly } from "@/lib/useGuestOnly";
 import { rules, useForm } from "@/lib/validation";
 import { useCooldown } from "@/lib/useCooldown";
 
@@ -20,6 +21,7 @@ const validators = { email: rules.email, code: rules.code };
 export default function VerifyEmailPage() {
   const router = useRouter();
   const client = useApolloClient();
+  const guest = useGuestOnly();
   const form = useForm({ email: "", code: "" }, validators);
   const [knownEmail, setKnownEmail] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
@@ -50,6 +52,7 @@ export default function VerifyEmailPage() {
     try {
       await verifyEmail({ variables: { input: { email: form.values.email.trim(), code: form.values.code.trim() } } });
       setRedirecting(true);
+      markSignedIn();
       clearPendingVerificationEmail();
       await client.clearStore();
       router.push(safeNextPath());
@@ -79,6 +82,8 @@ export default function VerifyEmailPage() {
       setError(apiError);
     }
   }
+
+  if (guest.redirecting) return <PageLoader />;
 
   return (
     <main className="auth-shell">

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@apollo/client";
 import {
   INGEST_FILE,
@@ -56,10 +56,11 @@ interface UploadItem {
   id: string;
   file: File;
   filename: string;
-  /** pending: chosen but not sent yet · queued: waiting its turn in an ingest run. */
+  /**
+   * pending: chosen but not sent yet · queued: waiting its turn to upload · uploading: being sent ·
+   * done: accepted and queued on the server (its progress then shows in the documents list).
+   */
   status: "pending" | "queued" | "uploading" | "done" | "error";
-  chunkCount?: number;
-  pipeline?: string;
   error?: string;
   /** False when retrying can't help (unsupported type, too large, duplicate, rejected as invalid). */
   retryable?: boolean;
@@ -71,8 +72,14 @@ interface KbDocument {
   id: string;
   title: string;
   contentHash: string | null;
+  status: "PROCESSING" | "READY" | "FAILED";
+  error: string | null;
+  chunkCount: number | null;
   createdAt: string;
 }
+
+/** How often the list is refreshed while a document is still being processed. */
+const PROCESSING_POLL_MS = 3000;
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -100,7 +107,14 @@ const NON_RETRYABLE_CODES = new Set(["BAD_USER_INPUT", "PAYLOAD_TOO_LARGE", "CON
 export default function KnowledgeBasePage() {
   const auth = useCurrentUser();
 
-  const { data: docsData, loading: docsLoading, error: docsError, refetch } = useQuery(DOCUMENTS, {
+  const {
+    data: docsData,
+    loading: docsLoading,
+    error: docsError,
+    refetch,
+    startPolling,
+    stopPolling,
+  } = useQuery(DOCUMENTS, {
     fetchPolicy: "network-only",
     skip: auth.status !== "authenticated",
   });
@@ -116,7 +130,7 @@ export default function KnowledgeBasePage() {
   const [pasteSubmitting, setPasteSubmitting] = useState(false);
   const [pasteError, setPasteError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const { showSuccess } = useToast();
+  const { showSuccess, showError } = useToast();
   const confirm = useConfirm();
 
 
@@ -127,12 +141,8 @@ export default function KnowledgeBasePage() {
   async function uploadOne(id: string, file: File) {
     updateUpload(id, { status: "uploading", error: undefined });
     try {
-      const { data } = await ingestFile({ variables: { file } });
-      updateUpload(id, {
-        status: "done",
-        chunkCount: data.ingestFile.chunkCount,
-        pipeline: data.ingestFile.pipeline,
-      });
+      await ingestFile({ variables: { file } });
+      updateUpload(id, { status: "done" });
       refetch();
     } catch (err) {
       updateUpload(id, {
@@ -168,10 +178,34 @@ export default function KnowledgeBasePage() {
   }
 
   const documents: KbDocument[] = useMemo(() => docsData?.documents ?? [], [docsData]);
+  // A failed document doesn't count: uploading the same content again is how it's retried.
   const knownHashes = useMemo(
-    () => new Map(documents.filter((d) => d.contentHash).map((d) => [d.contentHash as string, d.title])),
+    () =>
+      new Map(
+        documents.filter((d) => d.contentHash && d.status !== "FAILED").map((d) => [d.contentHash as string, d.title])
+      ),
     [documents]
   );
+
+  // Processing happens in the background: refresh the list until nothing is left in progress.
+  const anyProcessing = documents.some((d) => d.status === "PROCESSING");
+  useEffect(() => {
+    if (!anyProcessing) return;
+    startPolling(PROCESSING_POLL_MS);
+    return () => stopPolling();
+  }, [anyProcessing, startPolling, stopPolling]);
+
+  // Announce documents that finish processing while the page is open.
+  const previousStatuses = useRef(new Map<string, KbDocument["status"]>());
+  useEffect(() => {
+    const previous = previousStatuses.current;
+    for (const doc of documents) {
+      if (previous.get(doc.id) !== "PROCESSING") continue;
+      if (doc.status === "READY") showSuccess(`"${doc.title}" is ready — you can ask about it now.`);
+      if (doc.status === "FAILED") showError(new Error(`"${doc.title}" couldn't be processed. ${doc.error ?? ""}`.trim()));
+    }
+    previousStatuses.current = new Map(documents.map((d) => [d.id, d.status]));
+  }, [documents, showSuccess, showError]);
 
   /** Why a chosen file would be a duplicate, or null. Recomputed live, so deleting the original re-enables it. */
   function duplicateReason(item: UploadItem): string | null {
@@ -227,7 +261,7 @@ export default function KnowledgeBasePage() {
     setPasteSubmitting(true);
     try {
       await ingestText({ variables: { input: { title, content: paste.values.content.trim() } } });
-      showSuccess(`"${title}" was added to the knowledge base.`);
+      showSuccess(`"${title}" was added — it'll be searchable once processing finishes.`);
       paste.reset();
       refetch();
     } catch (err) {
@@ -322,13 +356,11 @@ export default function KnowledgeBasePage() {
                     {u.status === "queued" && <span className="upload-status">Waiting…</span>}
                     {u.status === "uploading" && (
                       <span className="upload-status">
-                        <Spinner size={12} /> Ingesting…
+                        <Spinner size={12} /> Uploading…
                       </span>
                     )}
                     {u.status === "done" && (
-                      <span className="upload-status upload-done-text">
-                        ✓ {u.chunkCount} chunks · {u.pipeline} pipeline
-                      </span>
+                      <span className="upload-status upload-done-text">✓ Uploaded — processing in the background</span>
                     )}
                     {u.status === "error" && (
                       <span className="upload-status upload-error-text" role="alert">
@@ -376,7 +408,7 @@ export default function KnowledgeBasePage() {
             <div className="ingest-bar">
               <span className="ingest-bar-text">
                 {ingesting
-                  ? "Ingesting files — you can keep adding more."
+                  ? "Uploading files — you can keep adding more."
                   : [
                       `${pendingCount} ${pendingCount === 1 ? "file" : "files"} ready to ingest`,
                       duplicateCount > 0 &&
@@ -397,7 +429,7 @@ export default function KnowledgeBasePage() {
                   onClick={ingestPending}
                   disabled={ingesting || pendingCount === 0}
                 >
-                  <ButtonLabel loading={ingesting} loadingText="Ingesting…">
+                  <ButtonLabel loading={ingesting} loadingText="Uploading…">
                     Ingest {pendingCount > 1 ? `${pendingCount} files` : "file"}
                   </ButtonLabel>
                 </button>
@@ -440,7 +472,7 @@ export default function KnowledgeBasePage() {
                 />
               </FormField>
               <button className="btn-primary" type="submit" disabled={pasteSubmitting}>
-                <ButtonLabel loading={pasteSubmitting} loadingText="Ingesting…">Ingest text</ButtonLabel>
+                <ButtonLabel loading={pasteSubmitting} loadingText="Adding…">Ingest text</ButtonLabel>
               </button>
             </form>
           </details>
@@ -463,7 +495,18 @@ export default function KnowledgeBasePage() {
                     <div className="conv-title">{doc.title}</div>
                     <div className="conv-date">
                       {fileTypeInfo(doc.title).name} · {formatAdded(doc.createdAt)}
+                      {doc.status === "READY" && doc.chunkCount != null && ` · ${doc.chunkCount} chunks`}
                     </div>
+                    {doc.status === "PROCESSING" && (
+                      <div className="doc-status doc-status-processing" role="status">
+                        <Spinner size={11} /> Processing — searchable soon
+                      </div>
+                    )}
+                    {doc.status === "FAILED" && (
+                      <div className="doc-status doc-status-failed" role="alert">
+                        Couldn&apos;t be processed: {doc.error ?? "unknown error"} Upload it again to retry.
+                      </div>
+                    )}
                   </div>
                   <button className="btn-ghost btn-danger" onClick={() => handleDelete(doc)}>
                     Delete

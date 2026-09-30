@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react";
 import { useQuery } from "@apollo/client";
 import { usePathname, useRouter } from "next/navigation";
 import { ME } from "@/lib/graphql/auth";
+import { markSignedIn, markSignedOut } from "@/lib/session";
 
 export type AuthStatus = "loading" | "authenticated" | "anonymous" | "error";
 
@@ -45,8 +46,13 @@ export function useCurrentUser({ redirectIfAnonymous = true }: { redirectIfAnony
     return () => clearTimeout(timer);
   }, [status, refetch]);
 
+  // Keep the middleware's hint in step with what the API says. Cleared before redirecting, so a
+  // stale hint can't send the browser straight back here.
   useEffect(() => {
-    if (status !== "anonymous" || !redirectIfAnonymous) return;
+    if (status === "authenticated") markSignedIn();
+    if (status !== "anonymous") return;
+    markSignedOut();
+    if (!redirectIfAnonymous) return;
     const next = pathname && pathname !== "/" ? `?next=${encodeURIComponent(pathname)}` : "";
     router.replace(`/login${next}`);
   }, [status, redirectIfAnonymous, pathname, router]);

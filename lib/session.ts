@@ -1,3 +1,5 @@
+import { DEFAULT_SIGNED_IN_PATH, isGuestOnlyPath, safeNext, SESSION_HINT_COOKIE } from "./routes";
+
 // lib/session.ts (the fallback default is also missing it)
 export const GRAPHQL_URL = process.env.NEXT_PUBLIC_GRAPHQL_URL || "http://localhost:4000/graphql";
 let inFlight: Promise<boolean> | null = null;
@@ -20,20 +22,36 @@ export function refreshSession(): Promise<boolean> {
   return inFlight;
 }
 
-const AUTH_PAGES = ["/login", "/signup", "/verify-email", "/forgot-password"];
+const SESSION_HINT_MAX_AGE_S = 30 * 24 * 60 * 60; // matches the refresh token's lifetime
+
+function writeSessionHint(value: string, maxAgeS: number) {
+  if (typeof document === "undefined") return;
+  const secure = window.location.protocol === "https:" ? "; Secure" : "";
+  document.cookie = `${SESSION_HINT_COOKIE}=${value}; Path=/; Max-Age=${maxAgeS}; SameSite=Lax${secure}`;
+}
+
+/** Tells the middleware this browser is signed in (see SESSION_HINT_COOKIE). */
+export function markSignedIn() {
+  writeSessionHint("1", SESSION_HINT_MAX_AGE_S);
+}
+
+/** Tells the middleware this browser is signed out. Always call before navigating to /login. */
+export function markSignedOut() {
+  writeSessionHint("", 0);
+}
 
 export function redirectToLogin(reason: "expired" = "expired") {
   if (typeof window === "undefined") return;
+  markSignedOut();
   const { pathname, search } = window.location;
-  if (AUTH_PAGES.includes(pathname)) return;
+  if (isGuestOnlyPath(pathname)) return;
   const next = encodeURIComponent(pathname + search);
   window.location.assign(`/login?reason=${reason}&next=${next}`);
 }
 
-export function safeNextPath(fallback = "/chat"): string {
+export function safeNextPath(fallback = DEFAULT_SIGNED_IN_PATH): string {
   if (typeof window === "undefined") return fallback;
-  const next = new URLSearchParams(window.location.search).get("next");
-  return next && next.startsWith("/") && !next.startsWith("//") ? next : fallback;
+  return safeNext(new URLSearchParams(window.location.search).get("next"), fallback);
 }
 
 // The address awaiting verification is handed from sign-up / login to /verify-email through
