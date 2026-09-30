@@ -5,13 +5,14 @@ import { useMutation } from "@apollo/client";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import ThemeToggle from "@/components/ThemeToggle";
-import { ButtonLabel } from "@/components/Loader";
+import { ButtonLabel, PageLoader } from "@/components/Loader";
 import FormField from "@/components/FormField";
 import CodeInput from "@/components/CodeInput";
 import { REQUEST_PASSWORD_RESET, RESET_PASSWORD } from "@/lib/graphql/auth";
 import { ApiError, toApiError } from "@/lib/errors";
 import { passwordChecks, rules, useForm, type Validator } from "@/lib/validation";
 import { useCooldown } from "@/lib/useCooldown";
+import { useGuestOnly } from "@/lib/useGuestOnly";
 
 const RESEND_COOLDOWN_SECONDS = 60;
 
@@ -28,6 +29,7 @@ const resetValidators: { [K in keyof ResetValues]: Validator<ResetValues> } = {
 
 export default function ForgotPasswordPage() {
   const router = useRouter();
+  const guest = useGuestOnly();
   const [step, setStep] = useState<"email" | "reset">("email");
   const emailForm = useForm({ email: "" }, emailValidators);
   const form = useForm<ResetValues>({ email: "", code: "", newPassword: "", confirmPassword: "" }, resetValidators);
@@ -103,6 +105,8 @@ export default function ForgotPasswordPage() {
       )}
     </>
   );
+
+  if (guest.redirecting) return <PageLoader />;
 
   if (step === "email") {
     return (

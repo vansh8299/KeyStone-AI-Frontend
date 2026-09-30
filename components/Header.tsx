@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useApolloClient, useMutation } from "@apollo/client";
 import { LOGOUT } from "@/lib/graphql/auth";
+import { markSignedOut } from "@/lib/session";
 import ThemeToggle from "@/components/ThemeToggle";
 import { useConfirm } from "@/components/ConfirmDialog";
 
@@ -32,6 +33,7 @@ export default function Header({ active, onMenuClick, menuOpen = false }: Header
     if (!confirmed) return;
     // Don't leave this account's conversations in memory for whoever signs in next.
     await client.clearStore();
+    markSignedOut();
     router.push("/login");
   }
 

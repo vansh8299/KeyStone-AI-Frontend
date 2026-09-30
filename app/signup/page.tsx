@@ -5,11 +5,12 @@ import { useMutation } from "@apollo/client";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import ThemeToggle from "@/components/ThemeToggle";
-import { ButtonLabel } from "@/components/Loader";
+import { ButtonLabel, PageLoader } from "@/components/Loader";
 import FormField from "@/components/FormField";
 import { SIGNUP } from "@/lib/graphql/auth";
 import { ApiError, toApiError } from "@/lib/errors";
 import { setPendingVerificationEmail } from "@/lib/session";
+import { useGuestOnly } from "@/lib/useGuestOnly";
 import { LIMITS, passwordChecks, rules, useForm, type Validator } from "@/lib/validation";
 
 type SignupValues = { name: string; email: string; password: string; confirmPassword: string };
@@ -24,6 +25,7 @@ const validators: { [K in keyof SignupValues]: Validator<SignupValues> } = {
 
 export default function SignupPage() {
   const router = useRouter();
+  const guest = useGuestOnly();
   const form = useForm<SignupValues>({ name: "", email: "", password: "", confirmPassword: "" }, validators);
   const [error, setError] = useState<ApiError | null>(null);
   const [signup, { loading }] = useMutation(SIGNUP);
@@ -51,6 +53,8 @@ export default function SignupPage() {
   }
 
   const password = form.values.password;
+
+  if (guest.redirecting) return <PageLoader />;
 
   return (
     <main className="auth-shell">

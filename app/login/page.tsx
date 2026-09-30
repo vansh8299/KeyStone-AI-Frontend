@@ -5,11 +5,12 @@ import { useApolloClient, useMutation } from "@apollo/client";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import ThemeToggle from "@/components/ThemeToggle";
-import { ButtonLabel } from "@/components/Loader";
+import { ButtonLabel, PageLoader } from "@/components/Loader";
 import FormField from "@/components/FormField";
 import { LOGIN } from "@/lib/graphql/auth";
 import { ApiError, toApiError } from "@/lib/errors";
-import { safeNextPath, setPendingVerificationEmail } from "@/lib/session";
+import { markSignedIn, safeNextPath, setPendingVerificationEmail } from "@/lib/session";
+import { useGuestOnly } from "@/lib/useGuestOnly";
 import { rules, useForm } from "@/lib/validation";
 
 const validators = { email: rules.email, password: rules.loginPassword };
@@ -22,6 +23,7 @@ const reasonInUrl = () => new URLSearchParams(window.location.search).get("reaso
 export default function LoginPage() {
   const router = useRouter();
   const client = useApolloClient();
+  const guest = useGuestOnly();
   const form = useForm({ email: "", password: "" }, validators);
   const [error, setError] = useState<ApiError | null>(null);
   const reason = useSyncExternalStore(noSubscription, reasonInUrl, () => null);
@@ -38,6 +40,7 @@ export default function LoginPage() {
     try {
       await login({ variables: { input: { email: form.values.email.trim(), password: form.values.password } } });
       setRedirecting("Signed in — opening your chats…");
+      markSignedIn();
       // Drop anything cached before signing in (e.g. the "signed out" answer, or a previous
       // user's data) so the app starts from the new session.
       await client.clearStore();
@@ -54,6 +57,8 @@ export default function LoginPage() {
       if (!form.applyServerError(apiError.field, apiError.message)) setError(apiError);
     }
   }
+
+  if (guest.redirecting) return <PageLoader />;
 
   return (
     <main className="auth-shell">

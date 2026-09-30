@@ -6,10 +6,9 @@ export const INGEST_FILE = gql`
       document {
         id
         title
+        status
         createdAt
       }
-      chunkCount
-      pipeline
     }
   }
 `;
@@ -20,10 +19,9 @@ export const INGEST_TEXT = gql`
       document {
         id
         title
+        status
         createdAt
       }
-      chunkCount
-      pipeline
     }
   }
 `;
@@ -41,6 +39,9 @@ export const DOCUMENTS = gql`
       title
       sourceUrl
       contentHash
+      status
+      error
+      chunkCount
       createdAt
     }
   }
