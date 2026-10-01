@@ -1554,6 +1554,14 @@ a.message-doc:hover {
   background: var(--surface-2);
 }
 
+.chat-token-usage {
+  margin-left: 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .chat-feedback-btn.active {
   color: var(--accent);
 }

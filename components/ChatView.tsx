@@ -79,6 +79,13 @@ interface ChatMessage {
   siblingIds?: string[];
   feedback?: MessageFeedback | null;
   attachments?: MessageAttachmentView[];
+  tokenUsage?: TokenUsage | null;
+}
+
+interface TokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
 }
 
 interface ServerConversation {
@@ -102,6 +109,7 @@ interface ServerConversation {
       }[];
     };
     feedback?: MessageFeedback | null;
+    tokenUsage?: TokenUsage | null;
   }[];
 }
 
@@ -125,6 +133,7 @@ function toChatMessages(conversation: ServerConversation): ChatMessage[] {
     clarification: m.metadata?.hitl?.status,
     siblingIds: m.siblingIds,
     feedback: m.feedback ?? null,
+    tokenUsage: m.tokenUsage ?? null,
     attachments: m.metadata?.attachments?.map((a) => ({
       id: a.id,
       kind: a.kind ?? "image",
@@ -707,6 +716,14 @@ export default function ChatView() {
                             >
                               {m.feedback.reason || m.feedback.categories.length > 0 ? "Edit feedback" : "Add a reason"}
                             </button>
+                          )}
+                          {m.tokenUsage && (
+                            <span
+                              className="chat-token-usage"
+                              title={`${m.tokenUsage.inputTokens.toLocaleString()} input + ${m.tokenUsage.outputTokens.toLocaleString()} output tokens`}
+                            >
+                              {m.tokenUsage.totalTokens.toLocaleString()} tokens
+                            </span>
                           )}
                         </div>
                       )}
