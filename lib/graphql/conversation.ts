@@ -15,6 +15,11 @@ export const CONVERSATION = gql`
         content
         source
         metadata
+        tokenUsage {
+          inputTokens
+          outputTokens
+          totalTokens
+        }
         feedback {
           rating
           categories
@@ -41,6 +46,11 @@ export const SWITCH_BRANCH = gql`
         content
         source
         metadata
+        tokenUsage {
+          inputTokens
+          outputTokens
+          totalTokens
+        }
         feedback {
           rating
           categories
@@ -67,6 +77,11 @@ export const REWIND_CONVERSATION = gql`
         content
         source
         metadata
+        tokenUsage {
+          inputTokens
+          outputTokens
+          totalTokens
+        }
         feedback {
           rating
           categories
