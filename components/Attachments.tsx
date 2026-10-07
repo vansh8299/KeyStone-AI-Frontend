@@ -232,8 +232,27 @@ export interface ResponseFileView {
   id: string;
   filename: string;
   size: number;
-  format: "pdf" | "docx";
+  /** The file's extension: pdf, docx, xlsx, pptx, json, py, … */
+  format: string;
 }
+
+const FILE_FORMAT_NAMES: Record<string, string> = {
+  pdf: "PDF",
+  docx: "Word",
+  xlsx: "Excel",
+  pptx: "PowerPoint",
+  md: "Markdown",
+  txt: "Text",
+  js: "JavaScript",
+  ts: "TypeScript",
+  py: "Python",
+  cs: "C#",
+  cpp: "C++",
+  rb: "Ruby",
+  sh: "Shell",
+  kt: "Kotlin",
+  rs: "Rust",
+};
 
 function formatSize(bytes: number): string {
   return bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
@@ -251,7 +270,7 @@ export function ResponseFiles({ files }: { files: ResponseFileView[] }) {
           <span className="doc-text">
             <span className="doc-name">{f.filename}</span>
             <span className="doc-meta">
-              {f.format === "pdf" ? "PDF" : "Word"} · {formatSize(f.size)} · Download
+              {FILE_FORMAT_NAMES[f.format] ?? f.format.toUpperCase()} · {formatSize(f.size)} · Download
             </span>
           </span>
         </a>
