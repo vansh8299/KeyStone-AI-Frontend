@@ -10,7 +10,7 @@ export interface AgentDone {
   userMessageId: string;
   assistantMessageId: string;
   /** PDF or Word files made for this reply, when the user asked for one. */
-  files?: { id: string; filename: string; size: number; format: "pdf" | "docx" }[];
+  files?: { id: string; filename: string; size: number; format: string }[];
 }
 
 export interface AgentStreamRequest {
