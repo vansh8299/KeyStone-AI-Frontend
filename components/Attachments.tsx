@@ -227,6 +227,39 @@ function pagesLabel(filename: string, pageCount?: number | null): string | null 
   return `${pageCount} ${unit}${pageCount === 1 ? "" : "s"}`;
 }
 
+/** A PDF or Word file the assistant made for a reply. */
+export interface ResponseFileView {
+  id: string;
+  filename: string;
+  size: number;
+  format: "pdf" | "docx";
+}
+
+function formatSize(bytes: number): string {
+  return bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+/** Download cards for the files the assistant created for a reply. */
+export function ResponseFiles({ files }: { files: ResponseFileView[] }) {
+  return (
+    <div className="message-docs response-files">
+      {files.map((f) => (
+        <a key={f.id} className="message-doc" href={attachmentUrl(f.id)} download={f.filename} title={`Download ${f.filename}`}>
+          <span className="doc-icon">
+            <DocIcon />
+          </span>
+          <span className="doc-text">
+            <span className="doc-name">{f.filename}</span>
+            <span className="doc-meta">
+              {f.format === "pdf" ? "PDF" : "Word"} · {formatSize(f.size)} · Download
+            </span>
+          </span>
+        </a>
+      ))}
+    </div>
+  );
+}
+
 function DocIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

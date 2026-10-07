@@ -112,6 +112,13 @@ export const ASK_AGENT_STREAM = gql`
         needsHumanInput
         userMessageId
         assistantMessageId
+        files {
+          id
+          filename
+          mimeType
+          size
+          format
+        }
       }
     }
   }
@@ -131,6 +138,13 @@ export const CONVERSATION_TURN = gql`
         needsHumanInput
         userMessageId
         assistantMessageId
+        files {
+          id
+          filename
+          mimeType
+          size
+          format
+        }
       }
     }
   }

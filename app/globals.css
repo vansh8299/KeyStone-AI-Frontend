@@ -3188,3 +3188,19 @@ a.message-doc:hover {
   width: auto;
   padding: 10px 22px;
 }
+
+/* Files the assistant made sit under its reply, on the left. */
+.message-docs.response-files {
+  justify-content: flex-start;
+  margin-top: 10px;
+}
+
+/* Shown under a streamed reply while its PDF or Word file is being made. */
+.chat-file-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--text-dim);
+}

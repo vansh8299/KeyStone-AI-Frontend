@@ -22,8 +22,10 @@ import {
   MessageAttachments,
   PendingAttachments,
   usePendingAttachments,
+  ResponseFiles,
   type MessageAttachmentView,
   type PendingAttachment,
+  type ResponseFileView,
 } from "@/components/Attachments";
 import { attachmentUrl } from "@/lib/fileUpload";
 import AttachButton from "@/components/AttachButton";
@@ -82,6 +84,9 @@ interface ChatMessage {
   feedback?: MessageFeedback | null;
   attachments?: MessageAttachmentView[];
   tokenUsage?: TokenUsage | null;
+  /** PDF or Word files the assistant made for this reply. */
+  files?: ResponseFileView[];
+  fileError?: string;
 }
 
 interface TokenUsage {
@@ -101,6 +106,8 @@ interface ServerConversation {
     metadata?: {
       toolsUsed?: string[];
       hitl?: { status?: "pending" | "resolved" };
+      files?: ResponseFileView[];
+      fileError?: string;
       attachments?: {
         id: string;
         kind?: "image" | "document";
@@ -124,6 +131,7 @@ const TOOL_LABELS: Record<string, string> = {
 const STATUS_LABELS: Record<AgentStatus, string> = {
   CHECKING_ANSWER: "Checking answer…",
   IMPROVING_ANSWER: "Improving answer…",
+  CREATING_FILE: "Creating your file…",
 };
 
 function toChatMessages(conversation: ServerConversation): ChatMessage[] {
@@ -136,6 +144,8 @@ function toChatMessages(conversation: ServerConversation): ChatMessage[] {
     siblingIds: m.siblingIds,
     feedback: m.feedback ?? null,
     tokenUsage: m.tokenUsage ?? null,
+    files: m.metadata?.files,
+    fileError: m.metadata?.fileError,
     attachments: m.metadata?.attachments?.map((a) => ({
       id: a.id,
       kind: a.kind ?? "image",
@@ -158,6 +168,7 @@ function settledMessage(turn: ChatTurn): ChatMessage | null {
           role: "assistant",
           content: result.answer,
           toolsUsed: result.toolsUsed,
+          files: result.files,
           clarification: result.needsHumanInput ? "pending" : undefined,
           local: true,
         }
@@ -687,6 +698,13 @@ export default function ChatView() {
                         )}
                       </>
                     )}
+                    {m.streaming && m.content && m.status === "CREATING_FILE" && (
+                      <div className="chat-file-status" role="status">
+                        <Spinner size={12} /> {STATUS_LABELS.CREATING_FILE}
+                      </div>
+                    )}
+                    {m.files && m.files.length > 0 && <ResponseFiles files={m.files} />}
+                    {m.fileError && <div className="composer-notice composer-notice-error">{m.fileError}</div>}
                     {m.toolsUsed && m.toolsUsed.length > 0 && (
                       <div className="chat-tools">
                         {m.toolsUsed.map((tool) => (
