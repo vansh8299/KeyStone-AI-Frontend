@@ -2,10 +2,11 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useMutation } from "@apollo/client";
-import { UPLOAD_CHAT_FILE } from "@/lib/graphql/rag";
+import { ATTACH_LINK, UPLOAD_CHAT_FILE } from "@/lib/graphql/rag";
+import { linkLabel } from "@/lib/links";
 import { getErrorMessage } from "@/lib/errors";
 import { Spinner } from "@/components/Loader";
-import { FileRejectedError, MAX_FILES_PER_MESSAGE, fileKind, prepareFile, type FileKind } from "@/lib/fileUpload";
+import { FileRejectedError, MAX_FILES_PER_MESSAGE, attachmentUrl, fileKind, prepareFile, type FileKind } from "@/lib/fileUpload";
 
 export interface PendingAttachment {
   localId: string;
@@ -18,6 +19,10 @@ export interface PendingAttachment {
   summary?: string;
   pageCount?: number | null;
   error?: string;
+  /** Read, but some pages couldn't be (e.g. the AI provider's rate limit). */
+  warning?: string;
+  /** Set when this attachment came from a link rather than a file. */
+  url?: string;
 }
 
 export interface MessageAttachmentView {
@@ -33,15 +38,20 @@ export interface MessageAttachmentView {
 interface UploadResult {
   id: string;
   kind: FileKind;
+  filename?: string;
   parsedText: string | null;
   summary: string | null;
   pageCount: number | null;
+  warning: string | null;
 }
 
 export function usePendingAttachments() {
   const [items, setItems] = useState<PendingAttachment[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   const [uploadChatFile] = useMutation<{ uploadChatFile: UploadResult }>(UPLOAD_CHAT_FILE);
+  const [attachLink] = useMutation<{ attachLink: UploadResult }>(ATTACH_LINK);
+  /** Links already attached (or tried) for the message being written, so each is read once. */
+  const seenLinks = useRef(new Set<string>());
   const urls = useRef(new Set<string>());
 
   useEffect(() => {
@@ -95,6 +105,7 @@ export function usePendingAttachments() {
               parsedText: result.parsedText ?? undefined,
               summary: result.summary ?? undefined,
               pageCount: result.pageCount,
+              warning: result.warning ?? undefined,
             });
           })
           .catch((err) =>
@@ -108,6 +119,53 @@ export function usePendingAttachments() {
     [uploadChatFile]
   );
 
+  /** Reads links like dropped files. Resolves with each one's final state once all have finished. */
+  const addLinks = useCallback(
+    async (urls: string[]): Promise<PendingAttachment[]> => {
+      const fresh = urls.filter((u) => !seenLinks.current.has(u));
+      const room = MAX_FILES_PER_MESSAGE - current.current.length;
+      if (fresh.length > room) setNotice(`You can attach up to ${MAX_FILES_PER_MESSAGE} files per message.`);
+      const accepted = fresh.slice(0, Math.max(0, room));
+      if (accepted.length === 0) return [];
+      accepted.forEach((u) => seenLinks.current.add(u));
+
+      const added: PendingAttachment[] = accepted.map((url) => ({
+        localId: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        kind: "document",
+        filename: linkLabel(url),
+        url,
+        status: "uploading",
+      }));
+      current.current = [...current.current, ...added];
+      setItems((prev) => [...prev, ...added]);
+
+      return Promise.all(
+        added.map(async (item): Promise<PendingAttachment> => {
+          let patch: Partial<PendingAttachment>;
+          try {
+            const { data } = await attachLink({ variables: { url: item.url } });
+            const result = data!.attachLink;
+            patch = {
+              status: "ready",
+              id: result.id,
+              kind: result.kind,
+              filename: result.filename ?? item.filename,
+              previewUrl: result.kind === "image" ? attachmentUrl(result.id) : undefined,
+              summary: result.summary ?? undefined,
+              pageCount: result.pageCount,
+              warning: result.warning ?? undefined,
+            };
+          } catch (err) {
+            patch = { status: "error", error: `${item.filename}: ${getErrorMessage(err)}` };
+          }
+          update(item.localId, patch);
+          return { ...item, ...patch };
+        })
+      );
+    },
+    [attachLink]
+  );
+
   const remove = useCallback((localId: string) => {
     setItems((prev) => {
       const item = prev.find((a) => a.localId === localId);
@@ -119,11 +177,15 @@ export function usePendingAttachments() {
     });
   }, []);
 
-  const takeReady = useCallback((): { ids: string[]; shown: MessageAttachmentView[] } => {
-    const ready = items.filter((a) => a.status === "ready" && a.id);
+  /** `justRead`: attachments that finished after the caller's render (e.g. links awaited on Send). */
+  const takeReady = useCallback((justRead: PendingAttachment[] = []): { ids: string[]; shown: MessageAttachmentView[] } => {
+    const finished = new Map(justRead.map((a) => [a.localId, a]));
+    const ready = [...items.map((a) => finished.get(a.localId) ?? a), ...justRead.filter((a) => !items.some((i) => i.localId === a.localId))]
+      .filter((a) => a.status === "ready" && a.id);
     ready.forEach((a) => a.previewUrl && urls.current.delete(a.previewUrl));
     setItems((prev) => prev.filter((a) => a.status !== "ready"));
     setNotice(null);
+    seenLinks.current.clear();
     return {
       ids: ready.map((a) => a.id!),
       shown: ready.map((a) => ({
@@ -142,6 +204,9 @@ export function usePendingAttachments() {
     items,
     notice,
     addFiles,
+    addLinks,
+    /** Whether this link was already attached or tried for the current message. */
+    hasLink: (url: string) => seenLinks.current.has(url),
     remove,
     takeReady,
     uploading: items.some((a) => a.status === "uploading"),
