@@ -13,6 +13,33 @@ export const INGEST_FILE = gql`
   }
 `;
 
+export const INGEST_URL = gql`
+  mutation IngestUrl($url: String!) {
+    ingestUrl(url: $url) {
+      document {
+        id
+        title
+        status
+        createdAt
+      }
+    }
+  }
+`;
+
+export const ATTACH_LINK = gql`
+  mutation AttachLink($url: String!) {
+    attachLink(url: $url) {
+      id
+      kind
+      filename
+      mimeType
+      summary
+      pageCount
+      warning
+    }
+  }
+`;
+
 export const INGEST_TEXT = gql`
   mutation IngestText($input: IngestTextInput!) {
     ingestText(input: $input) {
@@ -41,6 +68,7 @@ export const DOCUMENTS = gql`
       contentHash
       status
       error
+      warning
       chunkCount
       createdAt
     }
@@ -84,6 +112,13 @@ export const ASK_AGENT_STREAM = gql`
         needsHumanInput
         userMessageId
         assistantMessageId
+        files {
+          id
+          filename
+          mimeType
+          size
+          format
+        }
       }
     }
   }
@@ -103,6 +138,13 @@ export const CONVERSATION_TURN = gql`
         needsHumanInput
         userMessageId
         assistantMessageId
+        files {
+          id
+          filename
+          mimeType
+          size
+          format
+        }
       }
     }
   }
@@ -118,6 +160,7 @@ export const UPLOAD_CHAT_FILE = gql`
       parsedText
       summary
       pageCount
+      warning
     }
   }
 `;

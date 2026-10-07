@@ -1,6 +1,6 @@
 "use client";
 
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useApolloClient, useMutation, useQuery } from "@apollo/client";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
@@ -22,7 +22,10 @@ import {
   MessageAttachments,
   PendingAttachments,
   usePendingAttachments,
+  ResponseFiles,
   type MessageAttachmentView,
+  type PendingAttachment,
+  type ResponseFileView,
 } from "@/components/Attachments";
 import { attachmentUrl } from "@/lib/fileUpload";
 import AttachButton from "@/components/AttachButton";
@@ -59,6 +62,7 @@ function AnswerText({ content, streaming, checking }: { content: string; streami
 import { useSpeechRecognition } from "@/lib/useSpeechRecognition";
 import { LIMITS } from "@/lib/validation";
 import { useToast } from "@/components/Toaster";
+import { findLinks } from "@/lib/links";
 import {
   SET_MESSAGE_FEEDBACK,
   type FeedbackCategory,
@@ -80,6 +84,9 @@ interface ChatMessage {
   feedback?: MessageFeedback | null;
   attachments?: MessageAttachmentView[];
   tokenUsage?: TokenUsage | null;
+  /** PDF or Word files the assistant made for this reply. */
+  files?: ResponseFileView[];
+  fileError?: string;
 }
 
 interface TokenUsage {
@@ -99,6 +106,8 @@ interface ServerConversation {
     metadata?: {
       toolsUsed?: string[];
       hitl?: { status?: "pending" | "resolved" };
+      files?: ResponseFileView[];
+      fileError?: string;
       attachments?: {
         id: string;
         kind?: "image" | "document";
@@ -122,6 +131,7 @@ const TOOL_LABELS: Record<string, string> = {
 const STATUS_LABELS: Record<AgentStatus, string> = {
   CHECKING_ANSWER: "Checking answer…",
   IMPROVING_ANSWER: "Improving answer…",
+  CREATING_FILE: "Creating your file…",
 };
 
 function toChatMessages(conversation: ServerConversation): ChatMessage[] {
@@ -134,6 +144,8 @@ function toChatMessages(conversation: ServerConversation): ChatMessage[] {
     siblingIds: m.siblingIds,
     feedback: m.feedback ?? null,
     tokenUsage: m.tokenUsage ?? null,
+    files: m.metadata?.files,
+    fileError: m.metadata?.fileError,
     attachments: m.metadata?.attachments?.map((a) => ({
       id: a.id,
       kind: a.kind ?? "image",
@@ -156,6 +168,7 @@ function settledMessage(turn: ChatTurn): ChatMessage | null {
           role: "assistant",
           content: result.answer,
           toolsUsed: result.toolsUsed,
+          files: result.files,
           clarification: result.needsHumanInput ? "pending" : undefined,
           local: true,
         }
@@ -209,6 +222,14 @@ export default function ChatView() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isRewound, setIsRewound] = useState(false);
   const [input, setInput] = useState("");
+  const composerRef = useRef<HTMLTextAreaElement>(null);
+  // The message box grows with its text (up to the CSS max-height) and shrinks back once sent.
+  useLayoutEffect(() => {
+    const box = composerRef.current;
+    if (!box) return;
+    box.style.height = "auto";
+    box.style.height = `${box.scrollHeight + box.offsetHeight - box.clientHeight}px`;
+  }, [input]);
   const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const pendingFiles = usePendingAttachments();
@@ -362,12 +383,29 @@ export default function ChatView() {
       : settledMessage(turn);
   const shownMessages: ChatMessage[] = liveMessage ? [...messages, liveMessage] : messages;
 
-  function handleSubmit(e: React.FormEvent) {
+  // Links typed (not pasted) into the message are read when it's sent, and the message goes out
+  // once they're done — unless one failed, so the user sees why before anything is sent.
+  const [readingLinks, setReadingLinks] = useState(false);
+
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (speech.listening) speech.cancel();
+    if (busy || readingLinks) return;
+    const typedLinks = findLinks(input).filter((u) => !pendingFiles.hasLink(u));
+    if (typedLinks.length === 0) return submitMessage();
+
+    setReadingLinks(true);
+    const read = await pendingFiles.addLinks(typedLinks);
+    setReadingLinks(false);
+    if (read.some((a) => a.status === "error")) return;
+    submitMessage(read);
+  }
+
+  function submitMessage(justRead: PendingAttachment[] = []) {
     const question = input.trim();
-    if (busy || pendingFiles.uploading || (!question && pendingFiles.readyCount === 0)) return;
-    const { ids, shown } = pendingFiles.takeReady();
+    const otherUploads = pendingFiles.items.some((a) => a.status === "uploading" && !justRead.some((r) => r.localId === a.localId));
+    if (busy || otherUploads || (!question && pendingFiles.readyCount + justRead.length === 0)) return;
+    const { ids, shown } = pendingFiles.takeReady(justRead);
     setInput("");
     runTurn(
       { question, ...(ids.length > 0 ? { attachmentIds: ids } : {}) },
@@ -391,7 +429,12 @@ export default function ChatView() {
 
   function handlePaste(e: React.ClipboardEvent) {
     const files = Array.from(e.clipboardData.files);
-    if (files.length === 0) return;
+    if (files.length === 0) {
+      // A pasted link is read like an attached file; the link itself stays in the message.
+      const links = findLinks(e.clipboardData.getData("text"));
+      if (links.length > 0 && !busy) pendingFiles.addLinks(links);
+      return;
+    }
     e.preventDefault();
     pendingFiles.addFiles(files);
   }
@@ -655,6 +698,13 @@ export default function ChatView() {
                         )}
                       </>
                     )}
+                    {m.streaming && m.content && m.status === "CREATING_FILE" && (
+                      <div className="chat-file-status" role="status">
+                        <Spinner size={12} /> {STATUS_LABELS.CREATING_FILE}
+                      </div>
+                    )}
+                    {m.files && m.files.length > 0 && <ResponseFiles files={m.files} />}
+                    {m.fileError && <div className="composer-notice composer-notice-error">{m.fileError}</div>}
                     {m.toolsUsed && m.toolsUsed.length > 0 && (
                       <div className="chat-tools">
                         {m.toolsUsed.map((tool) => (
@@ -834,6 +884,13 @@ export default function ChatView() {
                   {img.error}
                 </div>
               ))}
+            {pendingFiles.items
+              .filter((file) => file.status === "ready" && file.warning)
+              .map((file) => (
+                <div key={file.localId} className="composer-notice composer-notice-warning" role="status">
+                  {file.filename}: {file.warning}
+                </div>
+              ))}
             <PendingAttachments items={pendingFiles.items} onRemove={pendingFiles.remove} />
 
             <form className="chat-input-row" onSubmit={handleSubmit}>
@@ -858,8 +915,9 @@ export default function ChatView() {
                   <path d="M19 10v1a7 7 0 0 1-14 0v-1M12 18v4M8 22h8" />
                 </svg>
               </button>
-              <input
-                type="text"
+              <textarea
+                ref={composerRef}
+                rows={1}
                 placeholder={
                   awaitingClarification
                     ? "Answer the question above…"
@@ -876,6 +934,12 @@ export default function ChatView() {
                   if (speech.listening) speech.cancel();
                   setInput(e.target.value);
                 }}
+                onKeyDown={(e) => {
+                  // Enter sends; Shift+Enter adds a line. Not while an IME is still composing a word.
+                  if (e.key !== "Enter" || e.shiftKey || e.nativeEvent.isComposing) return;
+                  e.preventDefault();
+                  e.currentTarget.form?.requestSubmit();
+                }}
                 onPaste={handlePaste}
                 disabled={busy}
               />
@@ -883,7 +947,13 @@ export default function ChatView() {
                 className="btn-primary chat-send"
                 type="submit"
                 disabled={busy || pendingFiles.uploading || (!input.trim() && pendingFiles.readyCount === 0)}
-                title={pendingFiles.uploading ? "Waiting for files to finish reading…" : undefined}
+                title={
+                  readingLinks
+                    ? "Reading the link — your message will send when it's done…"
+                    : pendingFiles.uploading
+                      ? "Waiting for files to finish reading…"
+                      : undefined
+                }
               >
                 Send
               </button>

@@ -9,6 +9,8 @@ export interface AgentDone {
   needsHumanInput: boolean;
   userMessageId: string;
   assistantMessageId: string;
+  /** PDF or Word files made for this reply, when the user asked for one. */
+  files?: { id: string; filename: string; size: number; format: "pdf" | "docx" }[];
 }
 
 export interface AgentStreamRequest {
@@ -27,7 +29,7 @@ export interface AgentStreamHandlers {
   onReset?: () => void;
 }
 
-export type AgentStatus = "CHECKING_ANSWER" | "IMPROVING_ANSWER";
+export type AgentStatus = "CHECKING_ANSWER" | "IMPROVING_ANSWER" | "CREATING_FILE";
 
 type AgentStreamEvent =
   | { type: "CONVERSATION"; conversationId: string }

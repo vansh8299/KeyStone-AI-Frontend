@@ -5,6 +5,7 @@ import { useMutation, useQuery } from "@apollo/client";
 import {
   INGEST_FILE,
   INGEST_TEXT,
+  INGEST_URL,
   DELETE_INGESTED_DOCUMENT,
   DOCUMENTS,
 } from "@/lib/graphql/rag";
@@ -74,6 +75,7 @@ interface KbDocument {
   contentHash: string | null;
   status: "PROCESSING" | "READY" | "FAILED";
   error: string | null;
+  warning: string | null;
   chunkCount: number | null;
   createdAt: string;
 }
@@ -121,6 +123,10 @@ export default function KnowledgeBasePage() {
 
   const [ingestFile] = useMutation(INGEST_FILE);
   const [ingestText] = useMutation(INGEST_TEXT);
+  const [ingestUrl] = useMutation(INGEST_URL);
+  const [linkInput, setLinkInput] = useState("");
+  const [linkError, setLinkError] = useState<string | null>(null);
+  const [linkSubmitting, setLinkSubmitting] = useState(false);
   const [deleteDoc] = useMutation(DELETE_INGESTED_DOCUMENT);
 
   const [uploads, setUploads] = useState<UploadItem[]>([]);
@@ -201,7 +207,8 @@ export default function KnowledgeBasePage() {
     const previous = previousStatuses.current;
     for (const doc of documents) {
       if (previous.get(doc.id) !== "PROCESSING") continue;
-      if (doc.status === "READY") showSuccess(`"${doc.title}" is ready — you can ask about it now.`);
+      if (doc.status === "READY" && doc.warning) showError(new Error(`"${doc.title}" is ready, but not fully read. ${doc.warning}`));
+      else if (doc.status === "READY") showSuccess(`"${doc.title}" is ready — you can ask about it now.`);
       if (doc.status === "FAILED") showError(new Error(`"${doc.title}" couldn't be processed. ${doc.error ?? ""}`.trim()));
     }
     previousStatuses.current = new Map(documents.map((d) => [d.id, d.status]));
@@ -269,6 +276,28 @@ export default function KnowledgeBasePage() {
       if (!paste.applyServerError(apiError.field, apiError.message)) setPasteError(getErrorMessage(err));
     } finally {
       setPasteSubmitting(false);
+    }
+  }
+
+  async function handleLinkSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const url = linkInput.trim();
+    setLinkError(null);
+    if (!/^https?:\/\/\S+$/i.test(url)) {
+      setLinkError("Enter a full link starting with http:// or https://.");
+      return;
+    }
+    setLinkSubmitting(true);
+    try {
+      const { data } = await ingestUrl({ variables: { url } });
+      const title = data?.ingestUrl?.document?.title ?? url;
+      showSuccess(`"${title}" was added from the link — it'll be searchable once processing finishes.`);
+      setLinkInput("");
+      refetch();
+    } catch (err) {
+      setLinkError(getErrorMessage(err));
+    } finally {
+      setLinkSubmitting(false);
     }
   }
 
@@ -438,6 +467,35 @@ export default function KnowledgeBasePage() {
           )}
 
           <details className="paste-panel">
+            <summary>Or add from a link</summary>
+            <form onSubmit={handleLinkSubmit} className="paste-form">
+              <p className="link-hint">
+                A public link to a PDF, Word, Excel, CSV or text file, a Google Doc, Sheet or Slides, a Google
+                Drive, Dropbox or GitHub file, or a web page. It must be viewable without signing in.
+              </p>
+              {linkError && (
+                <div className="error-banner" role="alert">
+                  {linkError}
+                </div>
+              )}
+              <FormField id="link-url" label="Link">
+                <input
+                  id="link-url"
+                  type="url"
+                  inputMode="url"
+                  value={linkInput}
+                  onChange={(e) => setLinkInput(e.target.value)}
+                  maxLength={2048}
+                  placeholder="https://docs.google.com/document/d/…"
+                />
+              </FormField>
+              <button className="btn-primary" type="submit" disabled={linkSubmitting || !linkInput.trim()}>
+                <ButtonLabel loading={linkSubmitting} loadingText="Reading link…">Add link</ButtonLabel>
+              </button>
+            </form>
+          </details>
+
+          <details className="paste-panel">
             <summary>Or paste text / markdown directly</summary>
             <form onSubmit={handlePasteSubmit} className="paste-form">
               {pasteError && (
@@ -500,6 +558,11 @@ export default function KnowledgeBasePage() {
                     {doc.status === "PROCESSING" && (
                       <div className="doc-status doc-status-processing" role="status">
                         <Spinner size={11} /> Processing — searchable soon
+                      </div>
+                    )}
+                    {doc.status === "READY" && doc.warning && (
+                      <div className="doc-status doc-status-warning" role="status">
+                        Partly read: {doc.warning}
                       </div>
                     )}
                     {doc.status === "FAILED" && (
